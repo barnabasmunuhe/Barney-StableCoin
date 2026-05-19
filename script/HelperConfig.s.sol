@@ -33,8 +33,7 @@ contract HelperConfig is Script {
         }
     }
 
-    function run() external pure returns (address) {
-    }
+    function run() external pure returns (address) {}
 
     function getSepoliaEthConfig() internal pure returns (NetworkConfig memory) {
         return NetworkConfig({
@@ -58,7 +57,7 @@ contract HelperConfig is Script {
         MockV3Aggregator wBtcUsdPriceFeed = new MockV3Aggregator(DECIMALS, BTC_USD_PRICE);
         ERC20Mock wBtcMock = new ERC20Mock("WrappedBTC", "WBTC", INITIAL_ACCOUNT, INITIAL_BALANCE);
         vm.stopBroadcast();
-        
+
         return NetworkConfig({
             wEthUsdPriceFeed: address(wEthUsdPriceFeed),
             wBtcUsdPriceFeed: address(wBtcUsdPriceFeed),

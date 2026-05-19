@@ -26,7 +26,7 @@ contract DeployBSC is Script {
         // Transfer ownership of the stablecoin to the engine
         bsc.transferOwnership(address(engine));
         vm.stopBroadcast();
-        
+
         return (bsc, engine);
     }
 }
