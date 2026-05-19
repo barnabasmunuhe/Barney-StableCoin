@@ -47,6 +47,8 @@ contract CoinEngine is ReentrancyGuard {
     error CoinEngine__TokenAddressesAndPriceFeedsLengthMismatch();
     error CoinEngine__NotAllowedToken();
     error CoinEngine__TransferFailed();
+    error CoinEngine__HealthFactorBelowMinimum(uint256 userHealthFactor);
+    error CoinEngine__MintFailed();
 
     /*//////////////////////////////////////////////////////////////
                                  EVENTS
@@ -60,6 +62,9 @@ contract CoinEngine is ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
     uint256 private constant FEE_PRECISION = 1e10;
     uint256 private constant PRECISION = 1e18; // precision for price feeds and calculations
+    uint256 private constant LIQUIDATION_THRESHOLD = 50; //200% overcollateralization means 50% liquidation threshold
+    uint256 private constant LIQUIDATION_PRECISION = 100; // precision for liquidation threshold calculations
+    uint256 private constant MIN_HEALTH_FACTOR = 1; // health factor must be above 1
 
     mapping(address token => address priceFeed) private s_priceFeeds; // tokenToPriceFeed mapping
     mapping(address user => mapping(address token => uint256 amount)) private s_collateralDeposited; // userCollateralBalance mapping
@@ -139,14 +144,17 @@ contract CoinEngine is ReentrancyGuard {
 
     // get BSC minted & stores it
     // get the value of the collateral deposited > minted BSC
-    function mintBSC(address collateralToMint, uint256 amountCollateral)
+    function mintBSC(address collateralToken, uint256 amountCollateral)
         external
         moreThanZero(amountCollateral)
         returns (uint256)
     {
         s_bscMinted[msg.sender] += amountCollateral; //update the user's BSC minted balance(updating the state)
-        s_collateralDeposited = collateralToMint;
-        _revertIfHealthFactorIsBroken();
+        _revertIfHealthFactorIsBroken(msg.sender);
+        bool minted = i_bsc.mint(msg.sender, amountCollateral);
+        if (!minted) {
+            revert CoinEngine__MintFailed();
+        }
     }
 
     function burnBSC() external {}
@@ -175,15 +183,22 @@ contract CoinEngine is ReentrancyGuard {
         //total BSC tokens minted
         // collateral value in usd
         (uint256 totalBscMinted, uint256 collateralValue) = _getAccountInformation(user);
+        // $100  * 50 = 5000 / 100 = 50
+        uint256 collateralAdjustedForThreshold = collateralValue * LIQUIDATION_THRESHOLD / LIQUIDATION_PRECISION;
+        // $1000 ETH  100 BSCtoMint
+        // $1000(collateralValue) * 50(liquidation_threshold) = 50000 / 100(liquidation_precision) = 500 / 100(BSCMinted) = 5 health factor > 1 means safe, < 1 means at risk of liquidation
+        return (collateralAdjustedForThreshold * PRECISION) / totalBscMinted; // return health factor with precision
     }
 
     /**
      * @notice Reverts if the user's health factor is below the minimum threshold
      * @param user The address of the user to check the health factor for
      */
-    function _revertIfHealthFactorIsBroken(address user) external {
-        //DO they have enough collateral?
-        // Does it meet the minimum health factor requirement? If not revert
+    function _revertIfHealthFactorIsBroken(address user) internal view {
+        uint256 userHealthFactor = _healthFactor(user);
+        if (userHealthFactor < MIN_HEALTH_FACTOR) {
+            revert CoinEngine__HealthFactorBelowMinimum(userHealthFactor);
+        }
     }
 
     /*//////////////////////////////////////////////////////////////
