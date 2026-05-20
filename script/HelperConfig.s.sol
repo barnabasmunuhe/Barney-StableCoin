@@ -19,7 +19,6 @@ contract HelperConfig is Script {
     uint8 public constant DECIMALS = 8;
     int256 public constant ETH_USD_PRICE = 2000e8;
     int256 public constant BTC_USD_PRICE = 30000e8;
-    address public constant INITIAL_ACCOUNT = msg.sender;
     uint256 public constant INITIAL_BALANCE = 1000e8;
     uint256 public DEFAULT_ANVIL_KEY = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
 
@@ -35,7 +34,7 @@ contract HelperConfig is Script {
 
     function run() external pure returns (address) {}
 
-    function getSepoliaEthConfig() internal pure returns (NetworkConfig memory) {
+    function getSepoliaEthConfig() internal view returns (NetworkConfig memory) {
         return NetworkConfig({
             wEthUsdPriceFeed: 0x694AA1769357215DE4FAC081bf1f309aDC325306, // ETH / USD
             wBtcUsdPriceFeed: 0x1b44F3514812d835EB1BDB0acB33d3fA3351Ee43,
@@ -53,9 +52,11 @@ contract HelperConfig is Script {
         // Deploy mocks
         vm.startBroadcast();
         MockV3Aggregator wEthUsdPriceFeed = new MockV3Aggregator(DECIMALS, ETH_USD_PRICE);
-        ERC20Mock wEthMock = new ERC20Mock("WrappedETH", "WETH", INITIAL_ACCOUNT, INITIAL_BALANCE);
+        ERC20Mock wEthMock = new ERC20Mock();
+        wEthMock.mint(msg.sender, INITIAL_BALANCE);
         MockV3Aggregator wBtcUsdPriceFeed = new MockV3Aggregator(DECIMALS, BTC_USD_PRICE);
-        ERC20Mock wBtcMock = new ERC20Mock("WrappedBTC", "WBTC", INITIAL_ACCOUNT, INITIAL_BALANCE);
+        ERC20Mock wBtcMock = new ERC20Mock();
+        wBtcMock.mint(msg.sender, INITIAL_BALANCE);
         vm.stopBroadcast();
 
         return NetworkConfig({
@@ -65,5 +66,9 @@ contract HelperConfig is Script {
             wBtc: address(wBtcMock),
             deployerKey: DEFAULT_ANVIL_KEY
         });
+    }
+
+    function getActiveNetworkConfig() public view returns (NetworkConfig memory) {
+        return activeNetworkConfig;
     }
 }

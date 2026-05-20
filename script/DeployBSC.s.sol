@@ -10,12 +10,12 @@ import {HelperConfig} from "./HelperConfig.s.sol";
 contract DeployBSC is Script {
     HelperConfig public helperConfig;
 
-    address tokenAddresses;
-    address priceFeedAddresses;
+    address[] tokenAddresses;
+    address[] priceFeedAddresses;
 
     function run() external returns (BarneyStableCoin, CoinEngine) {
         helperConfig = new HelperConfig();
-        HelperConfig.NetworkConfig memory config = helperConfig.activeNetworkConfig();
+        HelperConfig.NetworkConfig memory config = helperConfig.getActiveNetworkConfig();
 
         tokenAddresses = [config.wEth, config.wBtc];
         priceFeedAddresses = [config.wEthUsdPriceFeed, config.wBtcUsdPriceFeed];

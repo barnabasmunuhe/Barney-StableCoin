@@ -144,14 +144,10 @@ contract CoinEngine is ReentrancyGuard {
 
     // get BSC minted & stores it
     // get the value of the collateral deposited > minted BSC
-    function mintBSC(address collateralToken, uint256 amountCollateral)
-        external
-        moreThanZero(amountCollateral)
-        returns (uint256)
-    {
-        s_bscMinted[msg.sender] += amountCollateral; //update the user's BSC minted balance(updating the state)
+    function mintBSC(uint256 amountToMint) external moreThanZero(amountToMint) nonReentrant {
+        s_bscMinted[msg.sender] += amountToMint; //update the user's BSC minted balance(updating the state)
         _revertIfHealthFactorIsBroken(msg.sender);
-        bool minted = i_bsc.mint(msg.sender, amountCollateral);
+        bool minted = i_bsc.mint(msg.sender, amountToMint); //interacting with the BSC contract to mint the BSC to the user
         if (!minted) {
             revert CoinEngine__MintFailed();
         }
