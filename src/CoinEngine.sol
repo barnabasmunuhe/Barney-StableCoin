@@ -26,6 +26,7 @@ pragma solidity ^0.8.28;
 import {BarneyStableCoin} from "./BarneyStableCoin.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
 
 /// @title  CoinEngine
@@ -40,13 +41,13 @@ import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/interfaces/Ag
 /// @dev    This contract is the core of the BSC system. It will handle all the logic for minting and redeeming the BSC, as well as maintaining the collateralization ratio of the system.
 /// @notice This contract is VERY loosely based on the MakerDAO DSS (DAI) system.
 contract CoinEngine is ReentrancyGuard {
+    using SafeERC20 for IERC20;
     /*//////////////////////////////////////////////////////////////
                                  ERRORS
     //////////////////////////////////////////////////////////////*/
     error CoinEngine__MustBeMoreThanZero();
     error CoinEngine__TokenAddressesAndPriceFeedsLengthMismatch();
     error CoinEngine__NotAllowedToken();
-    error CoinEngine__TransferFailed();
     error CoinEngine__HealthFactorBelowMinimum(uint256 userHealthFactor);
     error CoinEngine__MintFailed();
 
@@ -131,10 +132,8 @@ contract CoinEngine is ReentrancyGuard {
     {
         s_collateralDeposited[msg.sender][tokenCollateralAddress] += amountCollateral; //update the user's collateral balance(updating the state)
         //transfer the collateral from the user to the contract (interacting with an external contract)
-        bool sucess = IERC20(tokenCollateralAddress).transferFrom(msg.sender, address(this), amountCollateral);
-        if (!sucess) {
-            revert CoinEngine__TransferFailed();
-        }
+        IERC20(tokenCollateralAddress).safeTransferFrom(msg.sender, address(this), amountCollateral);
+        // safeTransferFrom will revert if the transfer fails, so we don't need to check for a failed transfer here.
         emit CollateralDeposited(msg.sender, tokenCollateralAddress, amountCollateral);
     }
 
@@ -213,6 +212,8 @@ contract CoinEngine is ReentrancyGuard {
     function getUsdValue(address token, uint256 amount) public view returns (uint256) {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
         (, int256 price,,,) = priceFeed.latestRoundData();
+        // 1 ETH = $1000
+        // returned value = 1000 * 1e8 CAVEAT: Add precision to match decimal places
         return (uint256(price) * FEE_PRECISION) * amount / PRECISION;
     }
 }
