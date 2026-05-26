@@ -124,7 +124,9 @@ contract CoinEngine is ReentrancyGuard {
                                EXTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
     /// @dev  This function allows users to deposit collateral and mint DSC in a single transaction.
-    function depositCollateralAndMintBSC(address tokenCollateralAddress, uint256 amountCollateral, uint256 amountToMint) external {
+    function depositCollateralAndMintBSC(address tokenCollateralAddress, uint256 amountCollateral, uint256 amountToMint)
+        external
+    {
         depositCollateral(tokenCollateralAddress, amountCollateral);
         mintBSC(amountToMint);
     }
@@ -149,15 +151,21 @@ contract CoinEngine is ReentrancyGuard {
     // @param amountCollateral The amount of collateral to redeem
     // @param amountBSCToBurn The amount of BSC to burn
     // @notice This function burns & redeems collateral in a single transaction
-    function redeemBSCForCollateral(address tokenCollateralAddress, uint256 amountCollateral, uint256 amountBSCToBurn) external {
+    function redeemBSCForCollateral(address tokenCollateralAddress, uint256 amountCollateral, uint256 amountBSCToBurn)
+        external
+    {
         burnBSC(amountBSCToBurn);
         redeemCollateral(tokenCollateralAddress, amountCollateral);
         // redeem collateral already checks health factor
     }
 
-    // @notice inorder to redeem collateral: 
+    // @notice inorder to redeem collateral:
     // 1. user health factor must be above the minimum threshold after redeeming collateral. If not, revert the transaction.
-    function redeemCollateral(address tokenCollateralAddress, uint256 amountCollateral) public moreThanZero(amountCollateral) nonReentrant {
+    function redeemCollateral(address tokenCollateralAddress, uint256 amountCollateral)
+        public
+        moreThanZero(amountCollateral)
+        nonReentrant
+    {
         _redeemCollateral(msg.sender, msg.sender, tokenCollateralAddress, amountCollateral);
         _revertIfHealthFactorIsBroken(msg.sender);
     }
@@ -173,7 +181,7 @@ contract CoinEngine is ReentrancyGuard {
         }
     }
 
-    function burnBSC(uint256 amountToBurn) public moreThanZero(amountToBurn){
+    function burnBSC(uint256 amountToBurn) public moreThanZero(amountToBurn) {
         _burnBSC(msg.sender, msg.sender, amountToBurn);
         //burning DSC won't break the health factor because we're removing the user's debt from the system but we will include a check just to be safe.
         _revertIfHealthFactorIsBroken(msg.sender); //SKEPTICAL IF THIS HITS!
@@ -181,15 +189,15 @@ contract CoinEngine is ReentrancyGuard {
 
     // if we nearing undercollaterization, we need someone to liquidate positions
     /**
-    @param collateral The erc20 collateral address to liquidate from the user
-    @param user The user who's health factor is broken.(should be below MIN_HEALTH_FACTOR)
-    @param debtToCover The amount of BSC you want to burn to improve the user's health factor
-    @notice You can partially liquidate a user
-    @notice You will get a liquidation bonus for taking the users funds.
-    @notice The system will always be overcollaterized roughly 200% in order for the liquidation to work
-    @dev We won't be able to incentivice the users if the protocol were 100% or less collaterized
-    eg.if the price of the collateral plumeted before anyone would be liquidated 
-    * follows CEI
+     * @param collateral The erc20 collateral address to liquidate from the user
+     * @param user The user who's health factor is broken.(should be below MIN_HEALTH_FACTOR)
+     * @param debtToCover The amount of BSC you want to burn to improve the user's health factor
+     * @notice You can partially liquidate a user
+     * @notice You will get a liquidation bonus for taking the users funds.
+     * @notice The system will always be overcollaterized roughly 200% in order for the liquidation to work
+     * @dev We won't be able to incentivice the users if the protocol were 100% or less collaterized
+     * eg.if the price of the collateral plumeted before anyone would be liquidated
+     * follows CEI
      */
     function liquidate(address collateral, address user, uint256 debtToCover) external moreThanZero(debtToCover) {
         uint256 userStartingHealthFactor = _healthFactor(user);
@@ -203,7 +211,7 @@ contract CoinEngine is ReentrancyGuard {
         // We should implement a feature to liquidate in the event the protocol is insolvent
         // Add sweep extra amounts into a treasury
 
-        uint256 liquidationBonus = collateralAmountFromDebtCovered * LIQUIDATION_BONUS/LIQUIDATION_PRECISION;
+        uint256 liquidationBonus = collateralAmountFromDebtCovered * LIQUIDATION_BONUS / LIQUIDATION_PRECISION;
         uint256 totalCollateralToEarn = collateralAmountFromDebtCovered + liquidationBonus;
         // Burn user's BSC
         _burnBSC(user, msg.sender, debtToCover);
@@ -221,21 +229,24 @@ contract CoinEngine is ReentrancyGuard {
     /*//////////////////////////////////////////////////////////////
                   PRIVATE AND INTERNAL VIEW FUNCTIONS
     //////////////////////////////////////////////////////////////*/
-     /**
+    /**
      * @dev CAVEAT: low-level internal function here! Do not call unless function calling it
      * is checking for health factor state
      */
     function _burnBSC(address onBehalfOf, address bscFrom, uint256 amountBscToBurn) private {
         s_bscMinted[onBehalfOf] -= amountBscToBurn; // removing their stableCoin debt from the system
         IERC20(address(i_bsc)).safeTransferFrom(bscFrom, address(this), amountBscToBurn); // transfer the BSC from the user to the smart contract
-        i_bsc.burn(amountBscToBurn); 
+        i_bsc.burn(amountBscToBurn);
     }
 
-    function _redeemCollateral(address from, address to, address tokenCollateralAddress, uint256 amountCollateral) private {
+    function _redeemCollateral(address from, address to, address tokenCollateralAddress, uint256 amountCollateral)
+        private
+    {
         s_collateralDeposited[from][tokenCollateralAddress] -= amountCollateral; //(Internal Accounting) pulling their debt out of the system
         emit CollateralRedeemed(from, to, tokenCollateralAddress, amountCollateral);
         IERC20(address(tokenCollateralAddress)).safeTransfer(to, amountCollateral); //transfer the token from the smart contract to the user
     }
+
     function _getAccountInformation(address user)
         private
         view
@@ -284,12 +295,12 @@ contract CoinEngine is ReentrancyGuard {
         return totalCollateralValueInUsd;
     }
 
-    function getCollateralAmountInUsd(address token, uint256 amountBSC) public view returns(uint256){
+    function getCollateralAmountInUsd(address token, uint256 amountBSC) public view returns (uint256) {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
         (, int256 price,,,) = priceFeed.latestRoundData();
         // price 2000e8 converting 10e18(bscTokensIn$) to ETH
-        return (amountBSC * PRECISION) / (uint256(price) * FEE_PRECISION);    
-        }
+        return (amountBSC * PRECISION) / (uint256(price) * FEE_PRECISION);
+    }
 
     function getUsdValue(address token, uint256 amount) public view returns (uint256) {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
