@@ -45,12 +45,12 @@ contract CoinEngine is ReentrancyGuard {
     /*//////////////////////////////////////////////////////////////
                                  ERRORS
     //////////////////////////////////////////////////////////////*/
-    error CoinEngine__MustBeMoreThanZero();
-    error CoinEngine__TokenAddressesAndPriceFeedsLengthMismatch();
-    error CoinEngine__NotAllowedToken();
-    error CoinEngine__HealthFactorBelowMinimum(uint256 userHealthFactor);
-    error CoinEngine__MintFailed();
-    error CoinEngine__HealthFactor_Is_OK();
+    error CoinEngine__Must_Be_More_Than_Zero();
+    error CoinEngine__Token_Addresses_And_PriceFeeds_Length_Mismatch();
+    error CoinEngine__Not_Allowed_Token();
+    error CoinEngine__Health_Factor_Below_Minimum(uint256 user_Health_Factor);
+    error CoinEngine__Mint_Failed();
+    error CoinEngine__Health_Factor_Is_OK();
     error DSCEngine__health_Factor_Not_Improved();
 
     /*//////////////////////////////////////////////////////////////
@@ -85,14 +85,14 @@ contract CoinEngine is ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
     modifier moreThanZero(uint256 amount) {
         if (amount <= 0) {
-            revert CoinEngine__MustBeMoreThanZero();
+            revert CoinEngine__Must_Be_More_Than_Zero();
         }
         _;
     }
 
     modifier isAllowedToken(address token) {
         if (s_priceFeeds[token] == address(0)) {
-            revert CoinEngine__NotAllowedToken();
+            revert CoinEngine__Not_Allowed_Token();
         }
         _;
     }
@@ -109,7 +109,7 @@ contract CoinEngine is ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
     constructor(address[] memory tokenAddresses, address[] memory priceFeedAddresses, address bscAddress) {
         if (tokenAddresses.length != priceFeedAddresses.length) {
-            revert CoinEngine__TokenAddressesAndPriceFeedsLengthMismatch();
+            revert CoinEngine__Token_Addresses_And_PriceFeeds_Length_Mismatch();
         }
 
         for (uint256 i = 0; i < tokenAddresses.length; i++) {
@@ -177,7 +177,7 @@ contract CoinEngine is ReentrancyGuard {
         _revertIfHealthFactorIsBroken(msg.sender);
         bool minted = i_bsc.mint(msg.sender, amountToMint); //interacting with the BSC contract to mint the BSC to the user
         if (!minted) {
-            revert CoinEngine__MintFailed();
+            revert CoinEngine__Mint_Failed();
         }
     }
 
@@ -202,10 +202,10 @@ contract CoinEngine is ReentrancyGuard {
     function liquidate(address collateral, address user, uint256 debtToCover) external moreThanZero(debtToCover) {
         uint256 userStartingHealthFactor = _healthFactor(user);
         if (userStartingHealthFactor >= MIN_HEALTH_FACTOR) {
-            revert CoinEngine__HealthFactor_Is_OK();
+            revert CoinEngine__Health_Factor_Is_OK();
         }
         // We need to get the ETH value of the debtToCover
-        uint256 collateralAmountFromDebtCovered = getCollateralAmountInUsd(collateral, debtToCover);
+        uint256 collateralAmountFromDebtCovered = getCollateralAmountFromUsd(collateral, debtToCover);
         // Incetivising users by 10% of the debt to be covered
         // liqudator receives $110 of  wETH for 100 DSC
         // We should implement a feature to liquidate in the event the protocol is insolvent
@@ -216,6 +216,7 @@ contract CoinEngine is ReentrancyGuard {
         // Burn user's BSC
         _burnBSC(user, msg.sender, debtToCover);
         // check health_factor
+        _redeemCollateral(user, msg.sender, collateral, totalCollateralToEarn);
         uint256 endingHealthFactor = _healthFactor(user);
         if (endingHealthFactor <= userStartingHealthFactor) {
             revert DSCEngine__health_Factor_Not_Improved();
@@ -278,7 +279,7 @@ contract CoinEngine is ReentrancyGuard {
     function _revertIfHealthFactorIsBroken(address user) internal view {
         uint256 userHealthFactor = _healthFactor(user);
         if (userHealthFactor < MIN_HEALTH_FACTOR) {
-            revert CoinEngine__HealthFactorBelowMinimum(userHealthFactor);
+            revert CoinEngine__Health_Factor_Below_Minimum(userHealthFactor);
         }
     }
 
@@ -295,7 +296,7 @@ contract CoinEngine is ReentrancyGuard {
         return totalCollateralValueInUsd;
     }
 
-    function getCollateralAmountInUsd(address token, uint256 amountBSC) public view returns (uint256) {
+    function getCollateralAmountFromUsd(address token, uint256 amountBSC) public view returns (uint256) {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
         (, int256 price,,,) = priceFeed.latestRoundData();
         // price 2000e8 converting 10e18(bscTokensIn$) to ETH
@@ -308,5 +309,13 @@ contract CoinEngine is ReentrancyGuard {
         // 1 ETH = $1000
         // returned value = 1000 * 1e8 CAVEAT: Add precision to match decimal places
         return (uint256(price) * FEE_PRECISION) * amount / PRECISION;
+    }
+
+    function getAccountInformation(address user)
+        external
+        view
+        returns (uint256 totalBscMinted, uint256 collateralValueInUsd)
+    {
+        (totalBscMinted, collateralValueInUsd) = _getAccountInformation(user);
     }
 }
