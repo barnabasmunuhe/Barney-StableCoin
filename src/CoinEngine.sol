@@ -71,7 +71,7 @@ contract CoinEngine is ReentrancyGuard {
     uint256 private constant LIQUIDATION_THRESHOLD = 50; //200% overcollateralization means 50% liquidation threshold
     uint256 private constant LIQUIDATION_PRECISION = 100; // precision for liquidation threshold calculations
     uint256 private constant LIQUIDATION_BONUS = 10; // This is 10% bonus for liquidators
-    uint256 private constant MIN_HEALTH_FACTOR = 1; // health factor must be above 1
+    uint256 private constant MIN_HEALTH_FACTOR = 1e18; // health factor must be above 1
 
     mapping(address token => address priceFeed) private s_priceFeeds; // tokenToPriceFeed mapping
     mapping(address user => mapping(address token => uint256 amount)) private s_collateralDeposited; // userCollateralBalance mapping
@@ -225,7 +225,9 @@ contract CoinEngine is ReentrancyGuard {
         _revertIfHealthFactorIsBroken(msg.sender);
     }
 
-    function getHealthFactor() external view {}
+    function getHealthFactor(address user) external view returns (uint256) {
+        return _healthFactor(user);
+    }
 
     /*//////////////////////////////////////////////////////////////
                   PRIVATE AND INTERNAL VIEW FUNCTIONS
@@ -258,13 +260,18 @@ contract CoinEngine is ReentrancyGuard {
     }
 
     /**
-     * @notice Returns the health factor of a user, which is a measure of how close they are to being undercollateralized/liquidation. A health factor above 1 means the user is safe, while a health factor below 1 means the user is at risk of liquidation.
+     * @notice Returns the health factor of a user, which is a measure of how close they are to being undercollateralized/liquidation.
+     *  A health factor above 1 means the user is safe, while a health factor below 1 means the user is at risk of liquidation.
      * @param user The address of the user to calculate the health factor for
      */
     function _healthFactor(address user) private view returns (uint256) {
         //total BSC tokens minted
         // collateral value in usd
         (uint256 totalBscMinted, uint256 collateralValue) = _getAccountInformation(user);
+
+        if (totalBscMinted == 0) {
+            return type(uint256).max; //the function will immediately exit by preventing "division by zero error"
+        }
         // $100  * 50 = 5000 / 100 = 50
         uint256 collateralAdjustedForThreshold = collateralValue * LIQUIDATION_THRESHOLD / LIQUIDATION_PRECISION;
         // $1000 ETH  100 BSCtoMint
@@ -317,5 +324,24 @@ contract CoinEngine is ReentrancyGuard {
         returns (uint256 totalBscMinted, uint256 collateralValueInUsd)
     {
         (totalBscMinted, collateralValueInUsd) = _getAccountInformation(user);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                            GETTER FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
+    function getCollateralBalanceOfUser(address user, address token) external view returns (uint256) {
+        return s_collateralDeposited[user][token];
+    }
+
+    function getCollateralTokens() external view returns (address[] memory) {
+        return s_collateralTokens;
+    }
+
+    function getBSCAddress() external view returns (address) {
+        return address(i_bsc);
+    }
+
+    function getCollateralTokenPriceFeed(address token) external view returns (address) {
+        return s_priceFeeds[token];
     }
 }

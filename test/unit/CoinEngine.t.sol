@@ -117,4 +117,153 @@ contract CoinEngineTest is Test {
         assertEq(totalBscMinted, expectedTotalBscMinted);
         assertEq(AMOUNT_COLLATERAL, expectedDepositAmount);
     }
+
+    function testDepositCollateralEmitsEvent() public {
+        vm.startPrank(USER);
+
+        ERC20Mock(wEth).approve(address(engine), AMOUNT_COLLATERAL);
+
+        vm.expectEmit(true, true, true, false);
+
+        emit CoinEngine.CollateralDeposited(USER, wEth, AMOUNT_COLLATERAL);
+
+        engine.depositCollateral(wEth, AMOUNT_COLLATERAL);
+
+        vm.stopPrank();
+    }
+
+    function testDepositCollateralUpdatesBalance() public collateralDeposited {
+        uint256 balance = engine.getCollateralBalanceOfUser(USER, wEth);
+
+        assertEq(balance, AMOUNT_COLLATERAL);
+    }
+
+    function testRevertsIfMintAmountIsZero() public {
+        vm.prank(USER);
+        vm.expectRevert(CoinEngine.CoinEngine__Must_Be_More_Than_Zero.selector);
+
+        engine.mintBSC(0);
+    }
+
+    // User deposits $20,000 collateral
+    // Threshold = 50%.
+    // Max mint allowed = $10,000
+    // If user tries minting above that → revert
+    function testRevertsIfMintBreaksHealthFactor() public collateralDeposited {
+        uint256 amountToMint = 20000 ether;
+
+        vm.startPrank(USER);
+        vm.expectRevert();
+        engine.mintBSC(amountToMint);
+        vm.stopPrank();
+    }
+
+    function testMintBSCUpdatesMintedAmount() public collateralDeposited {
+        uint256 amountToMint = 100 ether;
+
+        vm.prank(USER);
+        engine.mintBSC(amountToMint);
+
+        (uint256 totalMinted,) = engine.getAccountInformation(USER);
+
+        assertEq(totalMinted, amountToMint);
+    }
+
+    function testMintBSCTransfersTokensToUser() public collateralDeposited {
+        uint256 amountToMint = 100 ether;
+
+        vm.prank(USER);
+        engine.mintBSC(amountToMint);
+
+        uint256 userBalance = bsc.balanceOf(USER);
+        assertEq(userBalance, amountToMint);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                               BURN TESTS
+    //////////////////////////////////////////////////////////////*/
+    function testRevertsIfBurnAmountIsZero() public {
+        vm.prank(USER);
+        vm.expectRevert(CoinEngine.CoinEngine__Must_Be_More_Than_Zero.selector);
+
+        engine.burnBSC(0);
+    }
+
+    modifier mintedBSC() {
+        vm.startPrank(USER);
+        ERC20Mock(wEth).approve(address(engine), AMOUNT_COLLATERAL);
+        engine.depositCollateral(wEth, AMOUNT_COLLATERAL);
+        engine.mintBSC(100 ether); //100BSC
+        vm.stopPrank();
+        _;
+    }
+
+    function testBurnBSCDecreasesMintedAmount() public mintedBSC {
+        vm.startPrank(USER);
+        bsc.approve(address(engine), 100 ether);
+        engine.burnBSC(100 ether);
+        vm.stopPrank();
+        (uint256 totalMinted,) = engine.getAccountInformation(USER);
+        assertEq(totalMinted, 0);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                        REDEEM COLLATERAL TESTS
+    //////////////////////////////////////////////////////////////*/
+    function testRedeemRevertsIfHealthFactorBreaks() public mintedBSC {
+        vm.startPrank(USER);
+        vm.expectRevert();
+        engine.redeemCollateral(wEth, AMOUNT_COLLATERAL);
+        vm.stopPrank();
+    }
+
+    function testCanRedeemCollateral() public mintedBSC {
+        vm.startPrank(USER);
+        bsc.approve(address(engine), 100 ether); //allowing engine to use the 100BSC
+        engine.burnBSC(100 ether);
+        engine.redeemCollateral(wEth, AMOUNT_COLLATERAL);
+        vm.stopPrank();
+
+        uint256 balance = engine.getCollateralBalanceOfUser(USER, wEth);
+
+        assertEq(balance, 0);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                  DEPOSIT COLLATERAL AND MINTBSC TESTS
+    //////////////////////////////////////////////////////////////*/
+    function testDepositAndMintWorksTogether() public {
+        uint256 amountToMint = 100 ether;
+
+        vm.startPrank(USER);
+        ERC20Mock(wEth).approve(address(engine), AMOUNT_COLLATERAL);
+        engine.depositCollateralAndMintBSC(wEth, AMOUNT_COLLATERAL, amountToMint);
+        vm.stopPrank();
+
+        (uint256 totalMinted,) = engine.getAccountInformation(USER);
+        assertEq(totalMinted, amountToMint);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                    REDEEM COLLATERAL FROM BSC TESTS
+    //////////////////////////////////////////////////////////////*/
+    function testRedeemBSCForCollateralWorks() public mintedBSC {
+        vm.startPrank(USER);
+        bsc.approve(address(engine), 100 ether);
+        engine.redeemBSCForCollateral(wEth, AMOUNT_COLLATERAL, 100 ether);
+        vm.stopPrank();
+
+        (uint256 minted,) = engine.getAccountInformation(USER);
+
+        assertEq(minted, 0);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                          HEALTH FACTOR TESTS
+    //////////////////////////////////////////////////////////////*/
+    function testHealthFactorReturnsMaxIfNoMinted() public collateralDeposited {
+        uint256 healthFactor = engine.getHealthFactor(USER);
+
+        assertEq(healthFactor, type(uint256).max);
+    }
 }
