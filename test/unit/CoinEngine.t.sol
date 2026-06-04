@@ -134,7 +134,7 @@ contract CoinEngineTest is Test {
     }
 
     function testDepositCollateralUpdatesBalance() public collateralDeposited {
-        uint256 balance = engine.getCollateralBalanceOfUser(USER, wEth);
+        uint256 balance = engine.getCollateralBalanceOfUser(wEth, USER);
 
         assertEq(balance, AMOUNT_COLLATERAL);
     }
@@ -198,6 +198,19 @@ contract CoinEngineTest is Test {
         vm.stopPrank();
         _;
     }
+
+    modifier mintedNearThreshold() {
+    vm.startPrank(USER);
+
+    ERC20Mock(wEth).approve(address(engine), AMOUNT_COLLATERAL);
+
+    engine.depositCollateral(wEth, AMOUNT_COLLATERAL);
+
+    engine.mintBSC(10000 ether); // near max allowed
+
+    vm.stopPrank();
+    _;
+}
 
     function testBurnBSCDecreasesMintedAmount() public mintedBSC {
         vm.startPrank(USER);
@@ -276,7 +289,7 @@ contract CoinEngineTest is Test {
         assertEq(healthFactor, type(uint256).max);
     }
 
-    function testHealthFactorCanDecreaseBelowOne() public mintedBSC {
+    function testHealthFactorCanDecreaseBelowOne() public mintedNearThreshold {
         int256 ethUsdTankedPrice = 500e8; // $500/ETH
 
         // we need to be 200% overcollaterized at all time
