@@ -329,7 +329,7 @@ contract CoinEngine is ReentrancyGuard {
     /*//////////////////////////////////////////////////////////////
                             GETTER FUNCTIONS
     //////////////////////////////////////////////////////////////*/
-    function getCollateralBalanceOfUser(address user, address token) external view returns (uint256) {
+    function getCollateralBalanceOfUser(address token, address user) external view returns (uint256) {
         return s_collateralDeposited[user][token];
     }
 

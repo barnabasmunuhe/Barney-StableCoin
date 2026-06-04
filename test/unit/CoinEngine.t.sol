@@ -8,6 +8,7 @@ import {HelperConfig} from "../../script/HelperConfig.s.sol";
 import {BarneyStableCoin} from "../../src/BarneyStableCoin.sol";
 import {CoinEngine} from "../../src/CoinEngine.sol";
 import {ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
+import {MockV3Aggregator} from "@chainlink/contracts/src/v0.8/tests/MockV3Aggregator.sol";
 
 contract CoinEngineTest is Test {
     DeployBSC deployer;
@@ -247,6 +248,14 @@ contract CoinEngineTest is Test {
     /*//////////////////////////////////////////////////////////////
                     REDEEM COLLATERAL FROM BSC TESTS
     //////////////////////////////////////////////////////////////*/
+    function testMustReedeemMoreThanZero() public mintedBSC {
+        vm.startPrank(USER);
+        bsc.approve(address(engine), 100 ether); // amount to mint == 100 ether(BSC)
+        vm.expectRevert(CoinEngine.CoinEngine__Must_Be_More_Than_Zero.selector);
+        engine.redeemBSCForCollateral(wEth, AMOUNT_COLLATERAL, 0);
+        vm.stopPrank();
+    }
+
     function testRedeemBSCForCollateralWorks() public mintedBSC {
         vm.startPrank(USER);
         bsc.approve(address(engine), 100 ether);
@@ -265,5 +274,16 @@ contract CoinEngineTest is Test {
         uint256 healthFactor = engine.getHealthFactor(USER);
 
         assertEq(healthFactor, type(uint256).max);
+    }
+
+    function testHealthFactorCanDecreaseBelowOne() public mintedBSC {
+        int256 ethUsdTankedPrice = 500e8; // $500/ETH
+
+        // we need to be 200% overcollaterized at all time
+
+        MockV3Aggregator(ethUsdPriceFeed).updateAnswer(ethUsdTankedPrice);
+
+        uint256 userHealthFactor = engine.getHealthFactor(USER);
+        assert(userHealthFactor < 1e18);
     }
 }
