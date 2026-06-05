@@ -28,6 +28,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
+import {OracleLib} from "./libraries/OracleLib.sol";
 
 /// @title  CoinEngine
 /// @author Barnabas Munuhe
@@ -41,7 +42,6 @@ import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/interfaces/Ag
 /// @dev    This contract is the core of the BSC system. It will handle all the logic for minting and redeeming the BSC, as well as maintaining the collateralization ratio of the system.
 /// @notice This contract is VERY loosely based on the MakerDAO DSS (DAI) system.
 contract CoinEngine is ReentrancyGuard {
-    using SafeERC20 for IERC20;
     /*//////////////////////////////////////////////////////////////
                                  ERRORS
     //////////////////////////////////////////////////////////////*/
@@ -52,6 +52,12 @@ contract CoinEngine is ReentrancyGuard {
     error CoinEngine__Mint_Failed();
     error CoinEngine__Health_Factor_Is_OK();
     error DSCEngine__health_Factor_Not_Improved();
+
+    /*//////////////////////////////////////////////////////////////
+                           TYPE DECLARATIONS
+    //////////////////////////////////////////////////////////////*/
+    using SafeERC20 for IERC20;
+    using OracleLib for AggregatorV3Interface;
 
     /*//////////////////////////////////////////////////////////////
                                  EVENTS
@@ -305,14 +311,14 @@ contract CoinEngine is ReentrancyGuard {
 
     function getCollateralAmountFromUsd(address token, uint256 amountBSC) public view returns (uint256) {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
-        (, int256 price,,,) = priceFeed.latestRoundData();
+        (, int256 price,,,) = priceFeed.stalePriceCheckLatestRoundData();
         // price 2000e8 converting 10e18(bscTokensIn$) to ETH
         return (amountBSC * PRECISION) / (uint256(price) * FEE_PRECISION);
     }
 
     function getUsdValue(address token, uint256 amount) public view returns (uint256) {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
-        (, int256 price,,,) = priceFeed.latestRoundData();
+        (, int256 price,,,) = priceFeed.stalePriceCheckLatestRoundData();
         // 1 ETH = $1000
         // returned value = 1000 * 1e8 CAVEAT: Add precision to match decimal places
         return (uint256(price) * FEE_PRECISION) * amount / PRECISION;
