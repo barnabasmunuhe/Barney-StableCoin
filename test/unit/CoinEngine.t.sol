@@ -200,17 +200,17 @@ contract CoinEngineTest is Test {
     }
 
     modifier mintedNearThreshold() {
-    vm.startPrank(USER);
+        vm.startPrank(USER);
 
-    ERC20Mock(wEth).approve(address(engine), AMOUNT_COLLATERAL);
+        ERC20Mock(wEth).approve(address(engine), AMOUNT_COLLATERAL);
 
-    engine.depositCollateral(wEth, AMOUNT_COLLATERAL);
+        engine.depositCollateral(wEth, AMOUNT_COLLATERAL);
 
-    engine.mintBSC(10000 ether); // near max allowed
+        engine.mintBSC(10000 ether); // near bsc maximum minting allowed
 
-    vm.stopPrank();
-    _;
-}
+        vm.stopPrank();
+        _;
+    }
 
     function testBurnBSCDecreasesMintedAmount() public mintedBSC {
         vm.startPrank(USER);

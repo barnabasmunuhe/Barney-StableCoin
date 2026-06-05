@@ -8,6 +8,15 @@ import {DeployBSC} from "../../script/DeployBSC.s.sol";
 import {CoinEngine} from "../../src/CoinEngine.sol";
 import {BarneyStableCoin} from "../../src/BarneyStableCoin.sol";
 import {ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
+import {MockV3Aggregator} from "@chainlink/contracts/src/v0.8/tests/MockV3Aggregator.sol";
+
+/**
+ * @dev This handler should have capabilities to interact with other contracts like:
+ * - Price Feed contracts
+ * - wEth token contract
+ * - wBtc token contract
+ * @dev Handler should show people doing random things with the both tokens contracts
+ */
 
 contract Handler is Test {
     CoinEngine engine;
@@ -18,6 +27,8 @@ contract Handler is Test {
 
     uint256 public timesMintIsCalled;
     address[] public usersWithCollateralDeposited;
+    MockV3Aggregator public ethUsdPriceFeed;
+    MockV3Aggregator public btcUsdPriceFeed;
 
     uint256 MAX_DEPOSIT_SIZE = type(uint96).max;
 
@@ -29,6 +40,10 @@ contract Handler is Test {
         address[] memory collateralTokens = engine.getCollateralTokens();
         wEth = ERC20Mock(collateralTokens[0]);
         wBtc = ERC20Mock(collateralTokens[1]);
+
+        // Getting wEth & wBtc price from the system
+        ethUsdPriceFeed = MockV3Aggregator(engine.getCollateralTokenPriceFeed(address(wEth)));
+        btcUsdPriceFeed = MockV3Aggregator(engine.getCollateralTokenPriceFeed(address(wBtc)));
     }
 
     /**
@@ -85,6 +100,20 @@ contract Handler is Test {
             return;
         }
     }
+
+    // /**
+    // @notice For now the system is screwed if the price of collaterals spikes/tanks too much
+    // @dev Future Implementation of the system should be able to handle price spikes/dumps of collaterals
+    //  */
+    // function updateCollateralPrice(uint96 newPrice, address randomCollateral) public {
+    //     int256 newCollateralPrice = int256(uint256(newPrice));
+    //     uint256 collateralAsUint256 = uint256(uint160(randomCollateral));
+    //     if (collateralAsUint256 % 2 == 0) {
+    //         ethUsdPriceFeed.updateAnswer(newCollateralPrice);
+    //     } else {
+    //         btcUsdPriceFeed.updateAnswer(newCollateralPrice);
+    //     }
+    // }
 
     /*//////////////////////////////////////////////////////////////
                             HELPER FUNCTIONS
