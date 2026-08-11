@@ -31,7 +31,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 /// @notice Collateral: Exogenous (ETH and BTC)
 /// @notice Minting and redeeming: Algorithmic
 /// @notice Relative Stability: Pegged to USD
-/// @dev    Meant to be govered by the DSCEngine. This contract is just the ERC20 implementation of our stablecoin system.
+/// @dev    Meant to be govered by the coinEngine. This contract is just the ERC20 implementation of our stablecoin system.
 contract BarneyStableCoin is ERC20Burnable, Ownable {
     error DecentralizedStableCoin__MustBeMoreThanZero();
     error DecentralizedStableCoin__BurnAmountExceedsBalance();

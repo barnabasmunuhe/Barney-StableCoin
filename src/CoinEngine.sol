@@ -13,10 +13,8 @@
 // // constructor
 // // receive function (if exists)
 // // fallback function (if exists)
-// // external
-// // public
-// // internal
-// // private
+// // external & public
+// // internal & private
 // // internal & private view & pure functions
 // // external & public view & pure functions
 
@@ -127,7 +125,7 @@ contract CoinEngine is ReentrancyGuard {
     }
 
     /*//////////////////////////////////////////////////////////////
-                               EXTERNAL FUNCTIONS
+                               PUBLIC & EXTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
     /// @dev  This function allows users to deposit collateral and mint DSC in a single transaction.
     function depositCollateralAndMintBSC(address tokenCollateralAddress, uint256 amountCollateral, uint256 amountToMint)
@@ -235,6 +233,14 @@ contract CoinEngine is ReentrancyGuard {
         return _healthFactor(user);
     }
 
+    function _redeemCollateral(address from, address to, address tokenCollateralAddress, uint256 amountCollateral)
+        private
+    {
+        s_collateralDeposited[from][tokenCollateralAddress] -= amountCollateral; //(Internal Accounting) pulling their debt out of the system
+        emit CollateralRedeemed(from, to, tokenCollateralAddress, amountCollateral);
+        IERC20(address(tokenCollateralAddress)).safeTransfer(to, amountCollateral); //transfer the token from the smart contract to the user
+    }
+
     /*//////////////////////////////////////////////////////////////
                   PRIVATE AND INTERNAL VIEW FUNCTIONS
     //////////////////////////////////////////////////////////////*/
@@ -246,14 +252,6 @@ contract CoinEngine is ReentrancyGuard {
         s_bscMinted[onBehalfOf] -= amountBscToBurn; // removing their stableCoin debt from the system
         IERC20(address(i_bsc)).safeTransferFrom(bscFrom, address(this), amountBscToBurn); // transfer the BSC from the user to the smart contract
         i_bsc.burn(amountBscToBurn);
-    }
-
-    function _redeemCollateral(address from, address to, address tokenCollateralAddress, uint256 amountCollateral)
-        private
-    {
-        s_collateralDeposited[from][tokenCollateralAddress] -= amountCollateral; //(Internal Accounting) pulling their debt out of the system
-        emit CollateralRedeemed(from, to, tokenCollateralAddress, amountCollateral);
-        IERC20(address(tokenCollateralAddress)).safeTransfer(to, amountCollateral); //transfer the token from the smart contract to the user
     }
 
     function _getAccountInformation(address user)
@@ -297,8 +295,16 @@ contract CoinEngine is ReentrancyGuard {
     }
 
     /*//////////////////////////////////////////////////////////////
-                     PUBLIC AND EXTERNAL FUNCTIONS
+                          EXTERNAL & PUBLIC  GETTER FUNCTIONS
     //////////////////////////////////////////////////////////////*/
+    function getAccountInformation(address user)
+        external
+        view
+        returns (uint256 totalBscMinted, uint256 collateralValueInUsd)
+    {
+        (totalBscMinted, collateralValueInUsd) = _getAccountInformation(user);
+    }
+
     function getAccountCollateralValueInUsd(address user) public view returns (uint256 totalCollateralValueInUsd) {
         // loop through the collateral addresses and get total collateral value in usd
         for (uint256 i = 0; i < s_collateralTokens.length; i++) {
@@ -324,17 +330,6 @@ contract CoinEngine is ReentrancyGuard {
         return (uint256(price) * FEE_PRECISION) * amount / PRECISION;
     }
 
-    function getAccountInformation(address user)
-        external
-        view
-        returns (uint256 totalBscMinted, uint256 collateralValueInUsd)
-    {
-        (totalBscMinted, collateralValueInUsd) = _getAccountInformation(user);
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                            GETTER FUNCTIONS
-    //////////////////////////////////////////////////////////////*/
     function getCollateralBalanceOfUser(address token, address user) external view returns (uint256) {
         return s_collateralDeposited[user][token];
     }

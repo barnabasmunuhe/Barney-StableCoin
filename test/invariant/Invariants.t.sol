@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
-// What are our invariants?
-// 1. Total supply of BSC should always be less than the total value of collateral
+// What are our invariants?(WHAT SHOULD ALWAYS HOLD TRUE NO MATTER WHAT!)
+// 1. Total supply of BSC should always be less than the total value of collateral to deter solvency
 // 2. Getter view functions should NEVER revert
 
 pragma solidity ^0.8.28;
@@ -56,11 +56,11 @@ contract InvariantsTests is StdInvariant, Test {
     function invariant_getterFunctionsShouldNotRevert() public view {
         // we just call all the getter functions we have in our protocol and make sure they dont revert
         engine.getCollateralTokens();
-        engine.getCollateralBalanceOfUser(wEth, address(this));
-        engine.getCollateralBalanceOfUser(wBtc, address(this));
+        engine.getCollateralBalanceOfUser(wEth, address(this));✅
+        engine.getCollateralBalanceOfUser(wBtc, address(this));✅
         engine.getAccountInformation(address(this));
         engine.getUsdValue(wEth, wEthAmount);
         engine.getUsdValue(wBtc, wBtcAmount);
-        // engine.getAccountCollateralValueInUsd()
+        engine.getAccountCollateralValueInUsd()
     }
 }
