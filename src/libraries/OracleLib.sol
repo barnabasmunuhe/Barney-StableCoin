@@ -10,6 +10,7 @@ import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interf
  * -The CoinEngine freezes up if the price feed is stale to prevent people from minting coins with outdated collateral prices, which could lead to undercollateralization of the system
  * @notice The downside of this is that if the price feed goes down, the entire system goes down, but this is a risk we are willing to take to prevent undercollateralization of the system
  */
+
 library OracleLib {
     error OracleLib__PriceFeed_Is_Stale();
     error OracleLib__InvalidPrice();

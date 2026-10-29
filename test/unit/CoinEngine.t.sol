@@ -7,15 +7,9 @@ import {DeployBSC} from "../../script/DeployBSC.s.sol";
 import {HelperConfig} from "../../script/HelperConfig.s.sol";
 import {BarneyStableCoin} from "../../src/BarneyStableCoin.sol";
 import {CoinEngine} from "../../src/CoinEngine.sol";
-import {ERC20,ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
+import {ERC20, ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
 import {MockV3Aggregator} from "@chainlink/contracts/src/v0.8/tests/MockV3Aggregator.sol";
-
-contract ERC20MockEightDec is ERC20 {
-    constructor() ERC20("wBTC8", "wBTC8") {}
-    
-    function decimals() public pure override returns (uint8) { return 8; }
-    function mint(address to, uint256 amt) external { _mint(to, amt); }
-    }
+import {ERC20MockEightDec} from "test/mocks/ERC20MockEightDec.sol";
 
 contract CoinEngineTest is Test {
     DeployBSC deployer;
@@ -81,23 +75,23 @@ contract CoinEngineTest is Test {
     }
 
     function test_usdValueRespectsTokenDecimals() public {
-    // 1. Deploy an 8-dec ERC20
-    ERC20MockEightDec wBtc8 = new ERC20MockEightDec();
+        // 1. Deploy an 8-dec ERC20
+        ERC20MockEightDec wBtc8 = new ERC20MockEightDec();
 
-    // 2. Deploy a fresh price feed
-    MockV3Aggregator feed = new MockV3Aggregator(8, 40000e8);
+        // 2. Deploy a fresh price feed
+        MockV3Aggregator feed = new MockV3Aggregator(8, 40000e8);
 
-    // 3. Deploy a fresh engine with just this one collateral
-    address[] memory tokens = new address[](1);
-    tokens[0] = address(wBtc8);
-    address[] memory feeds = new address[](1);
-    feeds[0] = address(feed);
+        // 3. Deploy a fresh engine with just this one collateral
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(wBtc8);
+        address[] memory feeds = new address[](1);
+        feeds[0] = address(feed);
 
-    CoinEngine freshEngine = new CoinEngine(tokens, feeds, address(bsc));
+        CoinEngine freshEngine = new CoinEngine(tokens, feeds, address(bsc));
 
-    // 4. Assert
-    assertEq(freshEngine.getUsdValue(address(wBtc8), 1e8), 40000e18);
-    // 1e8 = 1 whole BTC in 8-dec, price = $40,000, expected = 40000e18
+        // 4. Assert
+        assertEq(freshEngine.getUsdValue(address(wBtc8), 1e8), 40000e18);
+        // 1e8 = 1 whole BTC in 8-dec, price = $40,000, expected = 40000e18
     }
 
     /*//////////////////////////////////////////////////////////////

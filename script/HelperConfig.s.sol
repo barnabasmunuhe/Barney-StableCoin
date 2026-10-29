@@ -5,6 +5,7 @@ pragma solidity ^0.8.28;
 import {Script} from "forge-std/Script.sol";
 import {MockV3Aggregator} from "@chainlink/contracts/src/v0.8/tests/MockV3Aggregator.sol";
 import {ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
+import {ERC20MockEightDec} from "test/mocks/ERC20MockEightDec.sol";// For Mock Operations only
 
 contract HelperConfig is Script {
     struct NetworkConfig {
@@ -19,7 +20,8 @@ contract HelperConfig is Script {
     uint8 public constant DECIMALS = 8;
     int256 public constant ETH_USD_PRICE = 2000e8;
     int256 public constant BTC_USD_PRICE = 30000e8;
-    uint256 public constant INITIAL_BALANCE = 1000e8;
+    uint256 public constant WETH_INITIAL_BALANCE = 1000e18;   // 1000 whole ETH
+    uint256 public constant WBTC_INITIAL_BALANCE = 1000e8;    // 1000 whole BTC
     uint256 public DEFAULT_ANVIL_KEY = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
 
     NetworkConfig public activeNetworkConfig;
@@ -53,10 +55,11 @@ contract HelperConfig is Script {
         vm.startBroadcast();
         MockV3Aggregator wEthUsdPriceFeed = new MockV3Aggregator(DECIMALS, ETH_USD_PRICE);
         ERC20Mock wEthMock = new ERC20Mock();
-        wEthMock.mint(msg.sender, INITIAL_BALANCE);
+        wEthMock.mint(msg.sender, WETH_INITIAL_BALANCE);
         MockV3Aggregator wBtcUsdPriceFeed = new MockV3Aggregator(DECIMALS, BTC_USD_PRICE);
-        ERC20Mock wBtcMock = new ERC20Mock();
-        wBtcMock.mint(msg.sender, INITIAL_BALANCE);
+        // ERC20Mock wBtcMock = new ERC20Mock(); // ← 18-dec, wrong for wBTC
+        ERC20MockEightDec wBtcMock = new ERC20MockEightDec();
+        wBtcMock.mint(msg.sender, WBTC_INITIAL_BALANCE);
         vm.stopBroadcast();
 
         return NetworkConfig({
