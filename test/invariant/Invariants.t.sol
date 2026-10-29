@@ -13,9 +13,10 @@ import {CoinEngine} from "../../src/CoinEngine.sol";
 import {BarneyStableCoin} from "../../src/BarneyStableCoin.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {HelperConfig} from "../../script/HelperConfig.s.sol";
-import {Handler} from "../../test/fuzz/Handler.t.sol";
+import {Handler} from "./Handler.t.sol";
 
-contract InvariantsTests is StdInvariant, Test {
+contract InvariantsTest is StdInvariant, Test {
+    //Creating new instances of our contracts to put in `good` use
     DeployBSC deployer;
     CoinEngine engine;
     BarneyStableCoin bsc;
@@ -24,8 +25,7 @@ contract InvariantsTests is StdInvariant, Test {
     address wBtc;
     Handler handler;
 
-    uint256 public constant wEthAmount = 1e18;
-    uint256 public constant wBtcAmount = 1e8;
+    uint256 public constant amount = 1e18;
 
     function setUp() external {
         deployer = new DeployBSC();
@@ -53,14 +53,39 @@ contract InvariantsTests is StdInvariant, Test {
         assert(wEthValue + wBtcValue >= totalSupply);
     }
 
+    // function invariant_getterFunctionsShouldNotRevert() public view {
+    //     // we just call all the getter functions we have in our protocol and make sure they dont revert
+    //     engine.getCollateralTokens();
+    //     engine.getCollateralBalanceOfUser(wEth, address(this));
+    //     engine.getCollateralBalanceOfUser(wBtc, address(this));
+    //     engine.getAccountInformation(address(this));
+    //     engine.getUsdValue(wEth, wEthAmount);
+    //     engine.getUsdValue(wBtc, wBtcAmount);
+    //     engine.getBSCAddress();
+    //     engine.getCollateralTokenPriceFeed(wEth);
+    //     engine.getCollateralTokenPriceFeed(wBtc);
+    //     engine.getCollateralAmountFromUsd(wEth, wEthAmount);
+    //     engine.getHealthFactor(address(this));
+    //     engine.getTotalAccountCollateralValueInUsd(address(this));   //REMEMBER TO PUT THE RIGHT PARAM FOR THIS!!!
+    // }
+
     function invariant_getterFunctionsShouldNotRevert() public view {
-        // we just call all the getter functions we have in our protocol and make sure they dont revert
-        engine.getCollateralTokens();
-        engine.getCollateralBalanceOfUser(wEth, address(this));✅
-        engine.getCollateralBalanceOfUser(wBtc, address(this));✅
-        engine.getAccountInformation(address(this));
-        engine.getUsdValue(wEth, wEthAmount);
-        engine.getUsdValue(wBtc, wBtcAmount);
-        engine.getAccountCollateralValueInUsd()
+    address[] memory collateralTokens = engine.getCollateralTokens();
+
+    // Basic getters (existing)
+    engine.getBSCAddress();
+    engine.getAccountInformation(address(this));
+    engine.getHealthFactor(address(this));
+
+    // Iterate every collateral
+    for (uint256 i = 0; i < collateralTokens.length; i++) {
+        address t = collateralTokens[i];
+        engine.getCollateralBalanceOfUser(t, address(this));
+        engine.getCollateralTokenPriceFeed(t);
+        engine.getUsdValue(t, 0);
+        engine.getUsdValue(t, amount);
+        engine.getCollateralAmountFromUsd(t, 0);
+        engine.getCollateralAmountFromUsd(t, amount);
     }
+}
 }

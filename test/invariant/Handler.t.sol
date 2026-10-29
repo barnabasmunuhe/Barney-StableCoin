@@ -17,7 +17,6 @@ import {MockV3Aggregator} from "@chainlink/contracts/src/v0.8/tests/MockV3Aggreg
  * - wBtc token contract
  * @dev Handler should show people doing random things with the both tokens contracts
  */
-
 contract Handler is Test {
     CoinEngine engine;
     BarneyStableCoin bsc;
@@ -46,6 +45,20 @@ contract Handler is Test {
         btcUsdPriceFeed = MockV3Aggregator(engine.getCollateralTokenPriceFeed(address(wBtc)));
     }
 
+    function depositCollateral(uint256 randomCollateral, uint256 amountCollateral) public {
+        ERC20Mock collateral = _getCollateralFromRandomCollateral(randomCollateral);
+        amountCollateral = bound(amountCollateral, 1, MAX_DEPOSIT_SIZE);
+
+        vm.startPrank(msg.sender);
+        collateral.mint(msg.sender, amountCollateral); //minting some collateral to the user so they can deposit it
+        collateral.approve(address(engine), amountCollateral);
+        engine.depositCollateral(address(collateral), amountCollateral);
+        vm.stopPrank();
+        // this will double push if the same address deposits twice
+        // Check if someone has already deposited collateral
+        usersWithCollateralDeposited.push(msg.sender);
+    }
+
     /**
      * @dev CAVEAT: Only Mint BSC with an address that has actually deposited collateral
      * -Its impossible for someone to mint coins without them depositing collateral
@@ -68,20 +81,6 @@ contract Handler is Test {
         vm.prank(sender);
         engine.mintBSC(amount);
         timesMintIsCalled++;
-    }
-
-    function depositCollateral(uint256 randomCollateral, uint256 amountCollateral) public {
-        ERC20Mock collateral = _getCollateralFromRandomCollateral(randomCollateral);
-        amountCollateral = bound(amountCollateral, 1, MAX_DEPOSIT_SIZE);
-
-        vm.startPrank(msg.sender);
-        collateral.mint(msg.sender, amountCollateral); //minting some collateral to the user so they can deposit it
-        collateral.approve(address(engine), amountCollateral);
-        engine.depositCollateral(address(collateral), amountCollateral);
-        vm.stopPrank();
-        // this will double push if the same address deposits twice
-        // Check if someone has already deposited collateral
-        usersWithCollateralDeposited.push(msg.sender);
     }
 
     function redeemCollateral(uint256 randomCollateral, uint256 amountCollateral) public {

@@ -22,10 +22,11 @@
 pragma solidity ^0.8.28;
 
 import {BarneyStableCoin} from "./BarneyStableCoin.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol"; //EXECUTION SECURITY
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol"; //TOKEN INTERACTION SAFETY
+import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 import {OracleLib} from "./libraries/OracleLib.sol";
 
 /// @title  CoinEngine
@@ -49,7 +50,8 @@ contract CoinEngine is ReentrancyGuard {
     error CoinEngine__Health_Factor_Below_Minimum(uint256 user_Health_Factor);
     error CoinEngine__Mint_Failed();
     error CoinEngine__Health_Factor_Is_OK();
-    error DSCEngine__health_Factor_Not_Improved();
+    error CoinEngine__health_Factor_Not_Improved();
+    error CoinEngine__InsufficientCollateral();
 
     /*//////////////////////////////////////////////////////////////
                            TYPE DECLARATIONS
@@ -70,14 +72,14 @@ contract CoinEngine is ReentrancyGuard {
     /*//////////////////////////////////////////////////////////////
                             STATE VARIABLES
     //////////////////////////////////////////////////////////////*/
-    uint256 private constant FEE_PRECISION = 1e10;
+    uint256 private constant FEE_PRECISION = 1e10; //decimal scaling factor between Chainlink's 8-decimal price & protocol's 18-decimal accounting
     uint256 private constant PRECISION = 1e18; // precision for price feeds and calculations
-    uint256 private constant LIQUIDATION_THRESHOLD = 50; //200% overcollateralization means 50% liquidation threshold
+    uint256 private constant LIQUIDATION_THRESHOLD = 50; //200% overcollateralization means 50% liquidation threshold(RISK PARAMETER)
     uint256 private constant LIQUIDATION_PRECISION = 100; // precision for liquidation threshold calculations
     uint256 private constant LIQUIDATION_BONUS = 10; // This is 10% bonus for liquidators
-    uint256 private constant MIN_HEALTH_FACTOR = 1e18; // health factor must be above 1
+    uint256 private constant MIN_HEALTH_FACTOR = 1e18; // health factor must be above 1(SOLVENCY INVARIANT)
 
-    mapping(address token => address priceFeed) private s_priceFeeds; // tokenToPriceFeed mapping
+    mapping(address token => address priceFeed) private s_priceFeeds; // collateralToken To Chainlink priceFeed mapping
     mapping(address user => mapping(address token => uint256 amount)) private s_collateralDeposited; // userCollateralBalance mapping
     mapping(address user => uint256 amountBscMinted) private s_bscMinted;
     address[] private s_collateralTokens; // array to keep track of the collateral tokens used in the system
@@ -111,17 +113,17 @@ contract CoinEngine is ReentrancyGuard {
     /*//////////////////////////////////////////////////////////////
                                FUNCTIONS
     //////////////////////////////////////////////////////////////*/
-    constructor(address[] memory tokenAddresses, address[] memory priceFeedAddresses, address bscAddress) {
-        if (tokenAddresses.length != priceFeedAddresses.length) {
+    constructor(address[] memory tokenCollateralAddresses, address[] memory priceFeedAddresses, address bscAddress) {
+        if (tokenCollateralAddresses.length != priceFeedAddresses.length) {
             revert CoinEngine__Token_Addresses_And_PriceFeeds_Length_Mismatch();
         }
 
-        for (uint256 i = 0; i < tokenAddresses.length; i++) {
-            s_priceFeeds[tokenAddresses[i]] = priceFeedAddresses[i]; //setting the tokenAddress of i = priceFeedAddress of i
-            s_collateralTokens.push(tokenAddresses[i]); //pushing the tokenAddress of i to the collateralTokens array
+        for (uint256 i = 0; i < tokenCollateralAddresses.length; i++) {
+            s_priceFeeds[tokenCollateralAddresses[i]] = priceFeedAddresses[i]; //setting the tokenAddress of i = priceFeedAddress of i
+            s_collateralTokens.push(tokenCollateralAddresses[i]); //pushing the tokenAddress of i to the collateralTokens array
         }
 
-        i_bsc = BarneyStableCoin(bscAddress);
+        i_bsc = BarneyStableCoin(bscAddress); //The Constructor receives the BSC token address & stores it
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -169,7 +171,11 @@ contract CoinEngine is ReentrancyGuard {
         public
         moreThanZero(amountCollateral)
         nonReentrant
+        isAllowedToken(tokenCollateralAddress)
     {
+        if (amountCollateral > s_collateralDeposited[msg.sender][tokenCollateralAddress]) {
+         revert CoinEngine__InsufficientCollateral();
+            }
         _redeemCollateral(msg.sender, msg.sender, tokenCollateralAddress, amountCollateral);
         _revertIfHealthFactorIsBroken(msg.sender);
     }
@@ -184,11 +190,11 @@ contract CoinEngine is ReentrancyGuard {
             revert CoinEngine__Mint_Failed();
         }
     }
-
-    function burnBSC(uint256 amountToBurn) public moreThanZero(amountToBurn) {
+    // 
+    function burnBSC(uint256 amountToBurn) public nonReentrant moreThanZero(amountToBurn) {
         _burnBSC(msg.sender, msg.sender, amountToBurn);
-        //burning DSC won't break the health factor because we're removing the user's debt from the system but we will include a check just to be safe.
-        _revertIfHealthFactorIsBroken(msg.sender); //SKEPTICAL IF THIS HITS!
+        //burning BSC won't break the health factor because we're removing the user's debt from the system but we will include a check just to be safe.
+        _revertIfHealthFactorIsBroken(msg.sender); // Defensive: burning only reduces debt, so HF can only improve — kept as a guard.
     }
 
     // if we nearing undercollaterization, we need someone to liquidate positions
@@ -203,15 +209,16 @@ contract CoinEngine is ReentrancyGuard {
      * eg.if the price of the collateral plumeted before anyone would be liquidated
      * follows CEI
      */
-    function liquidate(address collateral, address user, uint256 debtToCover) external moreThanZero(debtToCover) {
+    function liquidate(address collateral, address user, uint256 debtToCover) external nonReentrant moreThanZero(debtToCover) {
         uint256 userStartingHealthFactor = _healthFactor(user);
         if (userStartingHealthFactor >= MIN_HEALTH_FACTOR) {
             revert CoinEngine__Health_Factor_Is_OK();
         }
-        // We need to get the ETH value of the debtToCover
+
+        // Converting the USD debt into a collateral-token amount
         uint256 collateralAmountFromDebtCovered = getCollateralAmountFromUsd(collateral, debtToCover);
         // Incetivising users by 10% of the debt to be covered
-        // liqudator receives $110 of  wETH for 100 DSC
+        // liqudator receives $110 of  wETH for 100 BSC
         // We should implement a feature to liquidate in the event the protocol is insolvent
         // Add sweep extra amounts into a treasury
 
@@ -223,7 +230,7 @@ contract CoinEngine is ReentrancyGuard {
         _redeemCollateral(user, msg.sender, collateral, totalCollateralToEarn);
         uint256 endingHealthFactor = _healthFactor(user);
         if (endingHealthFactor <= userStartingHealthFactor) {
-            revert DSCEngine__health_Factor_Not_Improved();
+            revert CoinEngine__health_Factor_Not_Improved();
         }
         // checking if the liquidator's health factor aint broken in the process of liquidation
         _revertIfHealthFactorIsBroken(msg.sender);
@@ -233,6 +240,7 @@ contract CoinEngine is ReentrancyGuard {
         return _healthFactor(user);
     }
 
+    // ASSET WITHDRAWAL: The user is redeeming their collateral from the system. This will reduce their collateral in the system
     function _redeemCollateral(address from, address to, address tokenCollateralAddress, uint256 amountCollateral)
         private
     {
@@ -248,6 +256,7 @@ contract CoinEngine is ReentrancyGuard {
      * @dev CAVEAT: low-level internal function here! Do not call unless function calling it
      * is checking for health factor state
      */
+    //  DEBT REDUCTION: The user is burning their BSC to reduce their debt in the system. This will improve their health factor and make them less likely to be liquidated.
     function _burnBSC(address onBehalfOf, address bscFrom, uint256 amountBscToBurn) private {
         s_bscMinted[onBehalfOf] -= amountBscToBurn; // removing their stableCoin debt from the system
         IERC20(address(i_bsc)).safeTransferFrom(bscFrom, address(this), amountBscToBurn); // transfer the BSC from the user to the smart contract
@@ -260,27 +269,29 @@ contract CoinEngine is ReentrancyGuard {
         returns (uint256 totalBscMinted, uint256 collateralValueInUsd)
     {
         totalBscMinted = s_bscMinted[user];
-        collateralValueInUsd = getAccountCollateralValueInUsd(user);
+        collateralValueInUsd = getTotalAccountCollateralValueInUsd(user); //total collateral value in USD the user has deposited in the system
     }
 
     /**
      * @notice Returns the health factor of a user, which is a measure of how close they are to being undercollateralized/liquidation.
      *  A health factor above 1 means the user is safe, while a health factor below 1 means the user is at risk of liquidation.
      * @param user The address of the user to calculate the health factor for
+     * @notice ADJUSTEDCOLLATERALVALUEINUSD > TOTALBSCMINTED(debt)
      */
     function _healthFactor(address user) private view returns (uint256) {
-        //total BSC tokens minted
-        // collateral value in usd
-        (uint256 totalBscMinted, uint256 collateralValue) = _getAccountInformation(user);
+        //total BSC tokens minted && // total collateral value in usd
+        (uint256 totalBscMinted, uint256 TotalCollateralValueInUsd) = _getAccountInformation(user); //totalBscMinted & TotalCollateralValue are a tuple of the user's account information
 
+        // PREVENTS division by zero error
         if (totalBscMinted == 0) {
             return type(uint256).max; //the function will immediately exit by preventing "division by zero error"
         }
         // $100  * 50 = 5000 / 100 = 50
-        uint256 collateralAdjustedForThreshold = collateralValue * LIQUIDATION_THRESHOLD / LIQUIDATION_PRECISION;
+        uint256 TotalCollateralInUsdAdjustedForThreshold = TotalCollateralValueInUsd * LIQUIDATION_THRESHOLD / LIQUIDATION_PRECISION;
         // $1000 ETH  100 BSCtoMint
-        // $1000(collateralValue) * 50(liquidation_threshold) = 50000 / 100(liquidation_precision) = 500 / 100(BSCMinted) = 5 health factor > 1 means safe, < 1 means at risk of liquidation
-        return (collateralAdjustedForThreshold * PRECISION) / totalBscMinted; // return health factor with precision
+        // COMPARING THE ADJUSTED COLLATERAL VALUE AGAINST DEBT.
+        // $1000(TotalCollateralValue) * 50(liquidation_threshold) = 50000 / 100(liquidation_precision) = 500 / 100(BSCMinted) = 5 health factor > 1 means safe, < 1 means at risk of liquidation
+        return (TotalCollateralInUsdAdjustedForThreshold * PRECISION) / totalBscMinted; // return health factor with precision
     }
 
     /**
@@ -305,7 +316,7 @@ contract CoinEngine is ReentrancyGuard {
         (totalBscMinted, collateralValueInUsd) = _getAccountInformation(user);
     }
 
-    function getAccountCollateralValueInUsd(address user) public view returns (uint256 totalCollateralValueInUsd) {
+    function getTotalAccountCollateralValueInUsd(address user) public view returns (uint256 totalCollateralValueInUsd) {
         // loop through the collateral addresses and get total collateral value in usd
         for (uint256 i = 0; i < s_collateralTokens.length; i++) {
             address token = s_collateralTokens[i]; //address of the token we're working with
@@ -315,20 +326,22 @@ contract CoinEngine is ReentrancyGuard {
         return totalCollateralValueInUsd;
     }
 
-    function getCollateralAmountFromUsd(address token, uint256 amountBSC) public view returns (uint256) {
-        AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
-        (, int256 price,,,) = priceFeed.stalePriceCheckLatestRoundData();
-        // price 2000e8 converting 10e18(bscTokensIn$) to ETH
-        return (amountBSC * PRECISION) / (uint256(price) * FEE_PRECISION);
-    }
-
+    //Coverting token amount into it's usd value while handling different decimal formats used by ERC20 token formats & Chainlink Pricefeeds
     function getUsdValue(address token, uint256 amount) public view returns (uint256) {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
         (, int256 price,,,) = priceFeed.stalePriceCheckLatestRoundData();
-        // 1 ETH = $1000
-        // returned value = 1000 * 1e8 CAVEAT: Add precision to match decimal places
-        return (uint256(price) * FEE_PRECISION) * amount / PRECISION;
+        uint256 tokenDecimals = IERC20Metadata(token).decimals();
+        //(amount * price) scaled by 10^18(FEE_PRECISION compensates for oracle's 8 decimals) / (10^tokenDecimals * 10^8)-removes token's own decimal scaling
+        return amount * uint256(price) * FEE_PRECISION / (10 ** tokenDecimals);
     }
+
+    function getCollateralAmountFromUsd(address token, uint256 amountBSC) public view returns (uint256) {
+        AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
+        (, int256 price,,,) = priceFeed.stalePriceCheckLatestRoundData();
+        uint256 tokenDecimals = IERC20Metadata(token).decimals();
+        // Inverse: amountBSC(18 decimals USD) * 10^tokendecimals / uint256(price) * FEE_PRECISION
+        return amountBSC * (10 ** tokenDecimals) / (uint256(price) * FEE_PRECISION);
+    } 
 
     function getCollateralBalanceOfUser(address token, address user) external view returns (uint256) {
         return s_collateralDeposited[user][token];

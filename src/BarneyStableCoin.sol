@@ -42,7 +42,7 @@ contract BarneyStableCoin is ERC20Burnable, Ownable {
 
     function burn(uint256 _amount) public override onlyOwner {
         uint256 balance = balanceOf(msg.sender);
-        if (_amount <= 0) {
+        if (_amount == 0) {
             revert BarneyStableCoin__MustBeMoreThanZero();
         }
 

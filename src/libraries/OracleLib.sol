@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
-
+import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 /**
  * @title OracleLib
  * @author Barnabas Milton
@@ -13,7 +12,9 @@ import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/interfaces/Ag
  */
 library OracleLib {
     error OracleLib__PriceFeed_Is_Stale();
-    uint256 private constant TIMEOUT = 3 hours;
+    error OracleLib__InvalidPrice();
+
+    uint256 private constant TIMEOUT = 1 hours;
 
     function stalePriceCheckLatestRoundData(AggregatorV3Interface priceFeed)
         public
@@ -23,6 +24,8 @@ library OracleLib {
         (uint80 roundID, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound) =
             priceFeed.latestRoundData();
 
+        if (answer <= 0) revert OracleLib__InvalidPrice();
+        if (updatedAt > block.timestamp) revert OracleLib__PriceFeed_Is_Stale();
         uint256 secondsSinceLastUpdate = block.timestamp - updatedAt;
         if (secondsSinceLastUpdate > TIMEOUT) {
             revert OracleLib__PriceFeed_Is_Stale();
