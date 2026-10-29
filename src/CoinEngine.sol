@@ -339,8 +339,7 @@ contract CoinEngine is ReentrancyGuard {
     }
 
     //Coverting token amount into it's usd value while handling different decimal formats used by ERC20 token formats & Chainlink Pricefeeds
-    function getUsdValue(address token, uint256 amount) public view returns (uint256) {
-        if (s_priceFeeds[token] == address(0)) revert CoinEngine__Not_Allowed_Token();
+    function getUsdValue(address token, uint256 amount) public view isAllowedToken(token) returns (uint256) {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
         (, int256 price,,,) = priceFeed.stalePriceCheckLatestRoundData();
         uint256 tokenDecimals = IERC20Metadata(token).decimals();
@@ -348,8 +347,12 @@ contract CoinEngine is ReentrancyGuard {
         return amount * uint256(price) * FEE_PRECISION / (10 ** tokenDecimals);
     }
 
-    function getCollateralAmountFromUsd(address token, uint256 amountBSC) public view returns (uint256) {
-        if (s_priceFeeds[token] == address(0)) revert CoinEngine__Not_Allowed_Token();
+    function getCollateralAmountFromUsd(address token, uint256 amountBSC)
+        public
+        view
+        isAllowedToken(token)
+        returns (uint256)
+    {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
         (, int256 price,,,) = priceFeed.stalePriceCheckLatestRoundData();
         uint256 tokenDecimals = IERC20Metadata(token).decimals();
