@@ -77,12 +77,12 @@ contract InvariantsTest is StdInvariant, Test {
         }
     }
 
-    // function invariant_engineBalanceMatchesAccounting() public view {
-    //     address[] memory tokens = engine.getCollateralTokens();
-    //     for (uint256 i = 0; i < tokens.length; i++) {
-    //         uint256 physical = IERC20(tokens[i]).balanceOf(address(engine));
-    //         uint256 accounting = engine.getCollateralBalanceOfUser(tokens[i]) + engine.getReserveBalance(tokens[i]);
-    //         assertEq(physical, accounting, "balance/accounting mismatch");
-    //     }
-    // }
+    function invariant_engineBalanceMatchesAccounting() public view {
+        address[] memory tokens = engine.getCollateralTokens();
+        for (uint256 i = 0; i < tokens.length; i++) {
+            uint256 physical = IERC20(tokens[i]).balanceOf(address(engine));
+            uint256 accounting = engine.getTotalUserCollateral(tokens[i]) + engine.getReserveBalance(tokens[i]);
+            assertEq(physical, accounting, "balance/accounting mismatch");
+        }
+    }
 }

@@ -72,6 +72,7 @@ contract CoinEngine is ReentrancyGuard {
         address indexed redeemFrom, address indexed redeemTo, address indexed token, uint256 amount
     );
     event BadDebtRecognized(address indexed user, uint256 amount);
+    event ReserveAccrued(address indexed token, uint256 fee);
 
     /*//////////////////////////////////////////////////////////////
                             STATE VARIABLES
@@ -83,14 +84,17 @@ contract CoinEngine is ReentrancyGuard {
     uint256 private constant LIQUIDATION_BONUS = 10; // This is 10% bonus for liquidators
     uint256 private constant MIN_HEALTH_FACTOR = 1e18; // health factor must be above 1(SOLVENCY INVARIANT)
 
+    BarneyStableCoin private immutable i_bsc;
     mapping(address token => address priceFeed) private s_priceFeeds; // collateralToken To Chainlink priceFeed mapping
     mapping(address user => mapping(address token => uint256 amount)) private s_collateralDeposited; // userCollateralBalance mapping
     mapping(address token => uint256 total) private s_totalCollateralDeposited;
     mapping(address user => uint256 amountBscMinted) private s_bscMinted;
+    mapping(address token => uint256 amount) private s_reserve;
     address[] private s_collateralTokens; // array to keep track of the collateral tokens used in the system
     uint256 private s_totalBadDebt; //Tracks bad debt
 
-    BarneyStableCoin private immutable i_bsc;
+    uint256 public constant BPS_DENOMINATOR = 10_000;
+    uint256 public constant REDEEM_FEE_BPS = 10; // 0.10%
 
     /*//////////////////////////////////////////////////////////////
                                MODIFIERS
@@ -174,7 +178,9 @@ contract CoinEngine is ReentrancyGuard {
         isAllowedToken(tokenCollateralAddress)
         nonReentrant
     {
-        s_collateralDeposited[msg.sender][tokenCollateralAddress] += amountCollateral; //update the user's collateral balance(updating the state)
+        //update the user's collateral balance(updating the state)
+        s_collateralDeposited[msg.sender][tokenCollateralAddress] += amountCollateral;
+        s_totalCollateralDeposited[tokenCollateralAddress] += amountCollateral;
         //transfer the collateral from the user to the contract (interacting with an external contract)
         IERC20(tokenCollateralAddress).safeTransferFrom(msg.sender, address(this), amountCollateral);
         // safeTransferFrom will revert if the transfer fails, so we don't need to check for a failed transfer here.
@@ -205,7 +211,18 @@ contract CoinEngine is ReentrancyGuard {
         if (amountCollateral > s_collateralDeposited[msg.sender][tokenCollateralAddress]) {
             revert CoinEngine__InsufficientCollateral();
         }
-        _redeemCollateral(msg.sender, msg.sender, tokenCollateralAddress, amountCollateral);
+        uint256 fee = amountCollateral * REDEEM_FEE_BPS / BPS_DENOMINATOR;
+        uint256 userReceives = amountCollateral - fee;
+        // State updates
+        s_collateralDeposited[msg.sender][tokenCollateralAddress] -= amountCollateral;
+        s_totalCollateralDeposited[tokenCollateralAddress] -= amountCollateral;
+        if (fee > 0) {
+            s_reserve[tokenCollateralAddress] += fee;
+            emit ReserveAccrued(tokenCollateralAddress, fee);
+        }
+        // Interaction
+        IERC20(tokenCollateralAddress).safeTransfer(msg.sender, userReceives);
+        emit CollateralRedeemed(msg.sender, msg.sender, tokenCollateralAddress, userReceives);
         _revertIfHealthFactorIsBroken(msg.sender);
     }
 
@@ -311,6 +328,7 @@ contract CoinEngine is ReentrancyGuard {
         private
     {
         s_collateralDeposited[from][tokenCollateralAddress] -= amountCollateral; //(Internal Accounting) pulling their debt out of the system
+        s_totalCollateralDeposited[tokenCollateralAddress] -= amountCollateral;
         emit CollateralRedeemed(from, to, tokenCollateralAddress, amountCollateral);
         IERC20(address(tokenCollateralAddress)).safeTransfer(to, amountCollateral); //transfer the token from the smart contract to the user
     }
@@ -441,5 +459,9 @@ contract CoinEngine is ReentrancyGuard {
 
     function getTotalUserCollateral(address token) external view returns (uint256) {
         return s_totalCollateralDeposited[token];
+    }
+
+    function getReserveBalance(address token) external view returns (uint256) {
+        return s_reserve[token];
     }
 }

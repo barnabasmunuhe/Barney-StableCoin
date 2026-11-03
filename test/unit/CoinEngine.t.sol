@@ -55,7 +55,7 @@ contract CoinEngineTest is Test {
         new CoinEngine(tokenAddresses, priceFeedAddresses, address(bsc));
     }
 
-    function test_deployment_engineOwnsBsc() public view{
+    function test_deployment_engineOwnsBsc() public view {
         assertEq(bsc.owner(), address(engine));
     }
 
