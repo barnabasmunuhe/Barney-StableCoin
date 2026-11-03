@@ -14,6 +14,7 @@ import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interf
 library OracleLib {
     error OracleLib__PriceFeed_Is_Stale();
     error OracleLib__InvalidPrice();
+    error OracleLib__InvalidRoundData();
 
     uint256 private constant TIMEOUT = 1 hours;
 
@@ -26,11 +27,15 @@ library OracleLib {
             priceFeed.latestRoundData();
 
         if (answer <= 0) revert OracleLib__InvalidPrice();
-        if (updatedAt > block.timestamp) revert OracleLib__PriceFeed_Is_Stale();
-        uint256 secondsSinceLastUpdate = block.timestamp - updatedAt;
-        if (secondsSinceLastUpdate > TIMEOUT) {
+
+        if (updatedAt == 0 || updatedAt > block.timestamp || block.timestamp - updatedAt > TIMEOUT) {
             revert OracleLib__PriceFeed_Is_Stale();
         }
+
+        if (answeredInRound < roundID) {
+            revert OracleLib__InvalidRoundData();
+        }
+
         return (roundID, answer, startedAt, updatedAt, answeredInRound);
     }
 }

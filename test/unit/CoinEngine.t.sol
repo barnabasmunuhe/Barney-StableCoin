@@ -55,6 +55,10 @@ contract CoinEngineTest is Test {
         new CoinEngine(tokenAddresses, priceFeedAddresses, address(bsc));
     }
 
+    function test_deployment_engineOwnsBsc() public view{
+        assertEq(bsc.owner(), address(engine));
+    }
+
     /*//////////////////////////////////////////////////////////////
                            PRICE FEEDS TESTS
     //////////////////////////////////////////////////////////////*/
@@ -319,5 +323,58 @@ contract CoinEngineTest is Test {
 
         uint256 userHealthFactor = engine.getHealthFactor(USER);
         assert(userHealthFactor < 1e18);
+    }
+
+    function test_liquidateBankruptPositionSeizesAllCollateral() public {
+        // ── Setup: user deposits 1 ETH, mints at HF ≈ 1.0
+        address user = makeAddr("bankruptUser");
+        uint256 depositAmount = 1e18; // 1 ETH
+        deal(wEth, user, depositAmount);
+
+        vm.startPrank(user);
+        ERC20(wEth).approve(address(engine), depositAmount);
+        engine.depositCollateral(wEth, depositAmount);
+        // Mint up to HF ≈ 1.0: debt = (collateral USD × 50%) → HF = 1.0
+        // With ETH = $2000, collateral = $2000, max safe debt = $1000
+        engine.mintBSC(1000e18);
+        vm.stopPrank();
+
+        // ── Crash ETH from $2000 to $800 (60% drop)
+        MockV3Aggregator(engine.getCollateralTokenPriceFeed(wEth)).updateAnswer(800e8);
+
+        // Now: collateral = $800, debt = $1000.
+        // HF = (800 × 0.5) / 1000 = 0.4  → bankrupt territory (< 0.55)
+
+        // ── Liquidator steps in
+        address liquidator = makeAddr("liquidator");
+        deal(address(bsc), liquidator, 1000e18); // give liquidator BSC to burn
+
+        uint256 liquidatorWethBefore = ERC20(wEth).balanceOf(liquidator);
+
+        vm.startPrank(liquidator);
+        ERC20(bsc).approve(address(engine), 1000e18);
+        engine.liquidate(wEth, user, 1000e18); // try to cover all debt
+        vm.stopPrank();
+
+        // Calculate the expected debt burn using the same collateral cap.
+        uint256 cappedCollateralForDebt = depositAmount * 100 / 110;
+
+        uint256 expectedDebtBurned = engine.getUsdValue(wEth, cappedCollateralForDebt);
+
+        uint256 expectedRemainingDebt = 1000e18 - expectedDebtBurned;
+
+        // ── Liquidation assertions
+        uint256 liquidatorWethAfter = ERC20(wEth).balanceOf(liquidator);
+
+        assertEq(engine.getCollateralBalanceOfUser(wEth, user), 0);
+
+        assertEq(liquidatorWethAfter - liquidatorWethBefore, depositAmount);
+
+        // User's remaining debt should equal the recognized bad debt.
+        (uint256 userRemainingDebt, uint256 userCollateralUsd) = engine.getAccountInformation(user);
+
+        assertEq(userRemainingDebt, expectedRemainingDebt);
+        assertEq(engine.getTotalBadDebt(), expectedRemainingDebt);
+        assertEq(userCollateralUsd, 0);
     }
 }

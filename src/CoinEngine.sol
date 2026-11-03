@@ -52,6 +52,9 @@ contract CoinEngine is ReentrancyGuard {
     error CoinEngine__Health_Factor_Is_OK();
     error CoinEngine__health_Factor_Not_Improved();
     error CoinEngine__InsufficientCollateral();
+    error CoinEngine__No_CollateralTokens();
+    error CoinEngine__Zero_Address();
+    error CoinEngine__DuplicateCollateralToken();
 
     /*//////////////////////////////////////////////////////////////
                            TYPE DECLARATIONS
@@ -68,6 +71,7 @@ contract CoinEngine is ReentrancyGuard {
     event CollateralRedeemed(
         address indexed redeemFrom, address indexed redeemTo, address indexed token, uint256 amount
     );
+    event BadDebtRecognized(address indexed user, uint256 amount);
 
     /*//////////////////////////////////////////////////////////////
                             STATE VARIABLES
@@ -81,8 +85,10 @@ contract CoinEngine is ReentrancyGuard {
 
     mapping(address token => address priceFeed) private s_priceFeeds; // collateralToken To Chainlink priceFeed mapping
     mapping(address user => mapping(address token => uint256 amount)) private s_collateralDeposited; // userCollateralBalance mapping
+    mapping(address token => uint256 total) private s_totalCollateralDeposited;
     mapping(address user => uint256 amountBscMinted) private s_bscMinted;
     address[] private s_collateralTokens; // array to keep track of the collateral tokens used in the system
+    uint256 private s_totalBadDebt; //Tracks bad debt
 
     BarneyStableCoin private immutable i_bsc;
 
@@ -113,13 +119,34 @@ contract CoinEngine is ReentrancyGuard {
     /*//////////////////////////////////////////////////////////////
                                FUNCTIONS
     //////////////////////////////////////////////////////////////*/
+    /// @dev Feeds are NOT validated at construction. A broken feed is caught on first
+    ///      use via the OracleLib staleness + positivity checks. This avoids
+    ///      expensive constructor calls and matches how Uniswap V3 pools defer
+    ///      oracle setup to first observation.
     constructor(address[] memory tokenCollateralAddresses, address[] memory priceFeedAddresses, address bscAddress) {
         if (tokenCollateralAddresses.length != priceFeedAddresses.length) {
             revert CoinEngine__Token_Addresses_And_PriceFeeds_Length_Mismatch();
         }
 
+        if (tokenCollateralAddresses.length == 0) {
+            revert CoinEngine__No_CollateralTokens();
+        }
+
+        if (bscAddress == address(0)) {
+            revert CoinEngine__Zero_Address();
+        }
+
         for (uint256 i = 0; i < tokenCollateralAddresses.length; i++) {
-            s_priceFeeds[tokenCollateralAddresses[i]] = priceFeedAddresses[i]; //setting the tokenAddress of i = priceFeedAddress of i
+            if (tokenCollateralAddresses[i] == address(0)) revert CoinEngine__Zero_Address();
+            if (priceFeedAddresses[i] == address(0)) revert CoinEngine__Zero_Address();
+
+            // Duplicate check — O(n²) but n is tiny
+            for (uint256 j = 0; j < i; j++) {
+                if (tokenCollateralAddresses[j] == tokenCollateralAddresses[i]) {
+                    revert CoinEngine__DuplicateCollateralToken();
+                }
+            }
+            s_priceFeeds[tokenCollateralAddresses[i]] = priceFeedAddresses[i]; //setting the tokenAddresses against corresponding pricefeed address
             s_collateralTokens.push(tokenCollateralAddresses[i]); //pushing the tokenAddress of i to the collateralTokens array
         }
 
@@ -210,6 +237,9 @@ contract CoinEngine is ReentrancyGuard {
      * @notice The system will always be overcollaterized roughly 200% in order for the liquidation to work
      * @dev We won't be able to incentivice the users if the protocol were 100% or less collaterized
      * eg.if the price of the collateral plumeted before anyone would be liquidated
+     *  /// @dev Bad debt is only recognized when ALL collateral is exhausted. Partial-coverage
+     * ///      positions (some collateral, insufficient to cover debt) are not flagged here —
+     * ///      they remain liquidatable and only become bad debt once fully drained.
      * follows CEI
      */
     function liquidate(address collateral, address user, uint256 debtToCover)
@@ -222,22 +252,51 @@ contract CoinEngine is ReentrancyGuard {
             revert CoinEngine__Health_Factor_Is_OK();
         }
 
-        // Converting the USD debt into a collateral-token amount
+        // never try to burn more debt than the user has
+        uint256 userDebt = s_bscMinted[user];
+        if (debtToCover > userDebt) {
+            debtToCover = userDebt;
+        }
+        // Fetching user collateral balance
+        uint256 userCollateralBalance = s_collateralDeposited[user][collateral];
+
+        // Converting the debt into a collateral-token amount
         uint256 collateralAmountFromDebtCovered = getCollateralAmountFromUsd(collateral, debtToCover);
+
         // Incetivising users by 10% of the debt to be covered
         // liqudator receives $110 of  wETH for 100 BSC
         // We should implement a feature to liquidate in the event the protocol is insolvent
-        // Add sweep extra amounts into a treasury
-
         uint256 liquidationBonus = collateralAmountFromDebtCovered * LIQUIDATION_BONUS / LIQUIDATION_PRECISION;
         uint256 totalCollateralToEarn = collateralAmountFromDebtCovered + liquidationBonus;
+
+        // Cap: never redeem more collateral than the user actually has.
+        // If the liquidator's request exceeds the user's balance, give them everything
+        // and shrink debtToCover to preserve the 1.1x bonus ratio on the capped amount.
+        if (totalCollateralToEarn > userCollateralBalance) {
+            totalCollateralToEarn = userCollateralBalance;
+            uint256 cappedCollateralForDebt =
+                userCollateralBalance * LIQUIDATION_PRECISION / (LIQUIDATION_PRECISION + LIQUIDATION_BONUS);
+            debtToCover = getUsdValue(collateral, cappedCollateralForDebt);
+        }
         // Burn user's BSC
         _burnBSC(user, msg.sender, debtToCover);
         // check health_factor
         _redeemCollateral(user, msg.sender, collateral, totalCollateralToEarn);
         uint256 endingHealthFactor = _healthFactor(user);
-        if (endingHealthFactor <= userStartingHealthFactor) {
-            revert CoinEngine__health_Factor_Not_Improved();
+        // Only enforce "must improve" when the position was above the 0.55 threshold.
+        // Below 0.55, liquidation *cannot* mathematically improve HF (see writeup),
+        // so demanding improvement would make the position permanently unliquidatable.
+        if (userStartingHealthFactor >= (MIN_HEALTH_FACTOR * 55) / 100) {
+            if (endingHealthFactor <= userStartingHealthFactor) {
+                revert CoinEngine__health_Factor_Not_Improved();
+            }
+        }
+
+        // Track residual bad debt (debt with no collateral back)
+        uint256 remainingDebt = s_bscMinted[user];
+        if (remainingDebt > 0 && getTotalAccountCollateralValueInUsd(user) == 0) {
+            s_totalBadDebt += remainingDebt;
+            emit BadDebtRecognized(user, remainingDebt);
         }
         // checking if the liquidator's health factor aint broken in the process of liquidation
         _revertIfHealthFactorIsBroken(msg.sender);
@@ -374,5 +433,13 @@ contract CoinEngine is ReentrancyGuard {
 
     function getCollateralTokenPriceFeed(address token) external view returns (address) {
         return s_priceFeeds[token];
+    }
+
+    function getTotalBadDebt() external view returns (uint256) {
+        return s_totalBadDebt;
+    }
+
+    function getTotalUserCollateral(address token) external view returns (uint256) {
+        return s_totalCollateralDeposited[token];
     }
 }
