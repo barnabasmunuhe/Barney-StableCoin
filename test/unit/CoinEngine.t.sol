@@ -131,7 +131,7 @@ contract CoinEngineTest is Test {
         address[] memory feeds = new address[](1);
         feeds[0] = address(feed);
 
-        CoinEngine freshEngine = new CoinEngine(tokens, feeds, address(bsc), treasury);
+        CoinEngine freshEngine = new CoinEngine(tokens, feeds, address(bsc), address(0xdead));
 
         // 4. Assert
         assertEq(freshEngine.getUsdValue(address(wBtc8), 1e8), 40000e18);
@@ -419,8 +419,12 @@ contract CoinEngineTest is Test {
         MockV3Aggregator(ethUsdPriceFeed).updateAnswer(newPrice);
 
         address liquidator = makeAddr("liquidator");
-        deal(address(bsc), liquidator, mintAmount * 2);
+        deal(wEth, liquidator, 1e18); // Give liquidator some collateral
         vm.startPrank(liquidator);
+        ERC20Mock(wEth).approve(address(engine), 1e18);
+        engine.depositCollateral(wEth, 1e18); // Liquidator deposits collateral
+
+        deal(address(bsc), liquidator, mintAmount * 2);
         bsc.approve(address(engine), mintAmount * 2);
         engine.liquidate(wEth, badUser, mintAmount);
         vm.stopPrank();
@@ -471,19 +475,18 @@ contract CoinEngineTest is Test {
     /// @notice Physical collateral flows to the treasury address (not address(0xdead)),
     ///         proving the sink transfer works with a real destination.
     function test_reserveTransferredToTreasuryOnAbsorption() public mintedBSC {
-        vm.prank(USER);
-        engine.redeemCollateral(wEth, 10e18);
+    vm.prank(USER);
+    engine.redeemCollateral(wEth, 5e18); // Redeem half — HF stays healthy
 
-        address treasury = engine.getBadDebtSink();
-        uint256 treasuryBefore = ERC20Mock(wEth).balanceOf(treasury);
+    address sink = engine.getBadDebtSink();
+    uint256 sinkBefore = ERC20Mock(wEth).balanceOf(sink);
 
-        // Same small setup as test 1, ensuring full absorption → treasury receives collateral
-        _createBadDebt(0.02e18, 10e18, 500e8);
+    _createBadDebt(0.02e18, 10e18, 500e8);
 
-        assertGt(
-            ERC20Mock(wEth).balanceOf(treasury),
-            treasuryBefore,
-            "treasury should receive physically transferred collateral"
-        );
-    }
+    assertGt(
+        ERC20Mock(wEth).balanceOf(engine.getBadDebtSink()),
+        sinkBefore,
+        "treasury should receive physically transferred collateral"
+    );
+}
 }
