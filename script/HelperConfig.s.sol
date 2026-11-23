@@ -14,6 +14,7 @@ contract HelperConfig is Script {
         address wEth;
         address wBtc;
         uint256 deployerKey;
+        address treasury;
     }
 
     uint256 public constant SEPILIA_CHAINID = 11155111;
@@ -42,7 +43,8 @@ contract HelperConfig is Script {
             wBtcUsdPriceFeed: 0x1b44F3514812d835EB1BDB0acB33d3fA3351Ee43,
             wEth: 0xdd13E55209Fd76AfE204dBda4007C227904f0a81,
             wBtc: 0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063,
-            deployerKey: vm.envUint("PRIVATE_KEY")
+            deployerKey: vm.envUint("PRIVATE_KEY"),
+            treasury: 0x8fEf6247BF77b91E4982757aCdB08610605388f7
         });
     }
 
@@ -67,7 +69,8 @@ contract HelperConfig is Script {
             wBtcUsdPriceFeed: address(wBtcUsdPriceFeed),
             wEth: address(wEthMock),
             wBtc: address(wBtcMock),
-            deployerKey: DEFAULT_ANVIL_KEY
+            deployerKey: DEFAULT_ANVIL_KEY,
+            treasury: makeAddr("treasury")
         });
     }
 

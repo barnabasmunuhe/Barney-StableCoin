@@ -21,6 +21,7 @@ contract CoinEngineTest is Test {
     address btcUsdPriceFeed;
     address wEth;
     address wBtc;
+    address treasury;
 
     address[] public tokenAddresses;
     address[] public priceFeedAddresses;
@@ -28,6 +29,9 @@ contract CoinEngineTest is Test {
     address public USER = makeAddr("user");
     uint256 public constant AMOUNT_COLLATERAL = 10 ether;
     uint256 public constant ERC20_USER_BALANCE = 10 ether;
+    uint256 public constant AMOUNT_TO_MINT = 100 ether;
+
+    uint256 private _badUserCounter;
 
     function setUp() external {
         deployer = new DeployBSC();
@@ -44,6 +48,42 @@ contract CoinEngineTest is Test {
     }
 
     /*//////////////////////////////////////////////////////////////
+                               CONSTRUCTOR TESTS
+        //////////////////////////////////////////////////////////////*/
+    modifier mintedBSC() {
+        vm.startPrank(USER);
+        ERC20Mock(wEth).approve(address(engine), AMOUNT_COLLATERAL);
+        engine.depositCollateral(wEth, AMOUNT_COLLATERAL);
+        engine.mintBSC(100 ether); //100BSC
+        vm.stopPrank();
+        _;
+    }
+
+    /// @dev USER deposits AMOUNT_COLLATERAL and mints AMOUNT_TO_MINT. HF ends up very safe
+    ///      so subsequent redeems won't revert on health factor.
+    modifier depositedAndMinted() {
+        vm.startPrank(USER);
+        ERC20Mock(wEth).approve(address(engine), AMOUNT_COLLATERAL);
+        engine.depositCollateral(wEth, AMOUNT_COLLATERAL);
+        engine.mintBSC(AMOUNT_TO_MINT);
+        vm.stopPrank();
+        _;
+    }
+
+    modifier mintedNearThreshold() {
+        vm.startPrank(USER);
+
+        ERC20Mock(wEth).approve(address(engine), AMOUNT_COLLATERAL);
+
+        engine.depositCollateral(wEth, AMOUNT_COLLATERAL);
+
+        engine.mintBSC(10000 ether); // near bsc maximum minting allowed
+
+        vm.stopPrank();
+        _;
+    }
+
+    /*//////////////////////////////////////////////////////////////
                            CONSTRUCTOR TESTS
     //////////////////////////////////////////////////////////////*/
     function test_Reverts_If_Token_Length_Does_Not_Match_PriceFeeds() public {
@@ -52,7 +92,7 @@ contract CoinEngineTest is Test {
         priceFeedAddresses.push(btcUsdPriceFeed);
 
         vm.expectRevert(CoinEngine.CoinEngine__Token_Addresses_And_PriceFeeds_Length_Mismatch.selector);
-        new CoinEngine(tokenAddresses, priceFeedAddresses, address(bsc));
+        new CoinEngine(tokenAddresses, priceFeedAddresses, address(bsc), treasury);
     }
 
     function test_deployment_engineOwnsBsc() public view {
@@ -91,7 +131,7 @@ contract CoinEngineTest is Test {
         address[] memory feeds = new address[](1);
         feeds[0] = address(feed);
 
-        CoinEngine freshEngine = new CoinEngine(tokens, feeds, address(bsc));
+        CoinEngine freshEngine = new CoinEngine(tokens, feeds, address(bsc), treasury);
 
         // 4. Assert
         assertEq(freshEngine.getUsdValue(address(wBtc8), 1e8), 40000e18);
@@ -213,28 +253,6 @@ contract CoinEngineTest is Test {
         vm.expectRevert(CoinEngine.CoinEngine__Must_Be_More_Than_Zero.selector);
 
         engine.burnBSC(0);
-    }
-
-    modifier mintedBSC() {
-        vm.startPrank(USER);
-        ERC20Mock(wEth).approve(address(engine), AMOUNT_COLLATERAL);
-        engine.depositCollateral(wEth, AMOUNT_COLLATERAL);
-        engine.mintBSC(100 ether); //100BSC
-        vm.stopPrank();
-        _;
-    }
-
-    modifier mintedNearThreshold() {
-        vm.startPrank(USER);
-
-        ERC20Mock(wEth).approve(address(engine), AMOUNT_COLLATERAL);
-
-        engine.depositCollateral(wEth, AMOUNT_COLLATERAL);
-
-        engine.mintBSC(10000 ether); // near bsc maximum minting allowed
-
-        vm.stopPrank();
-        _;
     }
 
     function testBurnBSCDecreasesMintedAmount() public mintedBSC {
@@ -376,5 +394,96 @@ contract CoinEngineTest is Test {
         assertEq(userRemainingDebt, expectedRemainingDebt);
         assertEq(engine.getTotalBadDebt(), expectedRemainingDebt);
         assertEq(userCollateralUsd, 0);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                        ABSORPTION TESTS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @dev Creates a bad-debt event: fresh user deposits, mints, price crashes, liquidator covers.
+    ///      Returns the user address. Uses a unique address per call so tests can chain multiple events.
+    function _createBadDebt(uint256 depositAmount, uint256 mintAmount, int256 newPrice)
+        internal
+        returns (address badUser)
+    {
+        badUser = makeAddr(string(abi.encodePacked("badUser", _badUserCounter)));
+        _badUserCounter++;
+        deal(wEth, badUser, depositAmount);
+
+        vm.startPrank(badUser);
+        ERC20Mock(wEth).approve(address(engine), depositAmount);
+        engine.depositCollateral(wEth, depositAmount);
+        engine.mintBSC(mintAmount);
+        vm.stopPrank();
+
+        MockV3Aggregator(ethUsdPriceFeed).updateAnswer(newPrice);
+
+        address liquidator = makeAddr("liquidator");
+        deal(address(bsc), liquidator, mintAmount * 2);
+        vm.startPrank(liquidator);
+        bsc.approve(address(engine), mintAmount * 2);
+        engine.liquidate(wEth, badUser, mintAmount);
+        vm.stopPrank();
+    }
+
+    /// @notice Reserve is large enough → absorbs bad debt fully. No uncovered debt recorded.
+    /// @dev Setup numbers (price = $500 during crash):
+    ///      USER redeems 5 ETH → reserve = 0.005 ETH = 5e15 wei
+    ///      Bad debt user: 0.02 ETH deposit, 10 BSC debt, HF = 0.5
+    ///      After liquidation: ~0.0018 ETH of uncovered debt = 1.8e15 wei
+    ///      Reserve (5e15) > bad debt (1.8e15) → full absorption
+    function test_reserveAbsorbsBadDebtFully() public mintedBSC {
+        vm.prank(USER);
+        engine.redeemCollateral(wEth, 5e18);
+
+        uint256 reserveBefore = engine.getReserveBalance(wEth);
+        uint256 treasuryBefore = ERC20Mock(wEth).balanceOf(engine.getBadDebtSink());
+        assertGt(reserveBefore, 0, "reserve should have accrued");
+
+        _createBadDebt(0.02e18, 10e18, 500e8);
+
+        assertLt(engine.getReserveBalance(wEth), reserveBefore, "reserve should decrease");
+        assertEq(engine.getTotalBadDebt(), 0, "no uncovered bad debt - reserve covered it all");
+        assertGt(
+            ERC20Mock(wEth).balanceOf(engine.getBadDebtSink()),
+            treasuryBefore,
+            "treasury should receive absorbed collateral"
+        );
+    }
+
+    /// @notice Reserve is too small → depleted to zero, rest recorded as uncovered debt.
+    /// @dev Tiny reserve: USER redeems 0.05 ETH → fee = 5e13 wei
+    ///      Large bad debt: 1 ETH deposit, 1000 BSC, crash to $500 → HF = 0.25
+    ///      Bad debt in ETH terms ≫ reserve → partial absorption, remainder tracked
+    function test_reserveDepletedThenUncoveredBadDebtRecorded() public mintedBSC {
+        vm.prank(USER);
+        engine.redeemCollateral(wEth, 0.05e18);
+
+        uint256 reserveBefore = engine.getReserveBalance(wEth);
+        assertGt(reserveBefore, 0, "reserve should have accrued");
+
+        _createBadDebt(1e18, 1000e18, 500e8);
+
+        assertEq(engine.getReserveBalance(wEth), 0, "reserve should be depleted");
+        assertGt(engine.getTotalBadDebt(), 0, "uncovered bad debt should be recorded");
+    }
+
+    /// @notice Physical collateral flows to the treasury address (not address(0xdead)),
+    ///         proving the sink transfer works with a real destination.
+    function test_reserveTransferredToTreasuryOnAbsorption() public mintedBSC {
+        vm.prank(USER);
+        engine.redeemCollateral(wEth, 10e18);
+
+        address treasury = engine.getBadDebtSink();
+        uint256 treasuryBefore = ERC20Mock(wEth).balanceOf(treasury);
+
+        // Same small setup as test 1, ensuring full absorption → treasury receives collateral
+        _createBadDebt(0.02e18, 10e18, 500e8);
+
+        assertGt(
+            ERC20Mock(wEth).balanceOf(treasury),
+            treasuryBefore,
+            "treasury should receive physically transferred collateral"
+        );
     }
 }

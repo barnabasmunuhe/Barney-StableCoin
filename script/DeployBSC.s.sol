@@ -27,7 +27,7 @@ contract DeployBSC is Script {
 
         vm.startBroadcast(config.deployerKey);
         BarneyStableCoin bsc = new BarneyStableCoin();
-        CoinEngine engine = new CoinEngine(tokenAddresses, priceFeedAddresses, address(bsc));
+        CoinEngine engine = new CoinEngine(tokenAddresses, priceFeedAddresses, address(bsc), config.treasury);
         // Transfer ownership of the stablecoin to the engine
         bsc.transferOwnership(address(engine));
         vm.stopBroadcast();

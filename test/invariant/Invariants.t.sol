@@ -30,7 +30,7 @@ contract InvariantsTest is StdInvariant, Test {
     function setUp() external {
         deployer = new DeployBSC();
         (bsc, engine, helperConfig) = deployer.run();
-        (,, wEth, wBtc,) = helperConfig.activeNetworkConfig();
+        (,, wEth, wBtc,,) = helperConfig.activeNetworkConfig();
         handler = new Handler(engine, bsc);
         targetContract(address(handler));
     }
