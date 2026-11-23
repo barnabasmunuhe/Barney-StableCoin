@@ -475,18 +475,18 @@ contract CoinEngineTest is Test {
     /// @notice Physical collateral flows to the treasury address (not address(0xdead)),
     ///         proving the sink transfer works with a real destination.
     function test_reserveTransferredToTreasuryOnAbsorption() public mintedBSC {
-    vm.prank(USER);
-    engine.redeemCollateral(wEth, 5e18); // Redeem half — HF stays healthy
+        vm.prank(USER);
+        engine.redeemCollateral(wEth, 5e18); // Redeem half — HF stays healthy
 
-    address sink = engine.getBadDebtSink();
-    uint256 sinkBefore = ERC20Mock(wEth).balanceOf(sink);
+        address sink = engine.getBadDebtSink();
+        uint256 sinkBefore = ERC20Mock(wEth).balanceOf(sink);
 
-    _createBadDebt(0.02e18, 10e18, 500e8);
+        _createBadDebt(0.02e18, 10e18, 500e8);
 
-    assertGt(
-        ERC20Mock(wEth).balanceOf(engine.getBadDebtSink()),
-        sinkBefore,
-        "treasury should receive physically transferred collateral"
-    );
-}
+        assertGt(
+            ERC20Mock(wEth).balanceOf(engine.getBadDebtSink()),
+            sinkBefore,
+            "treasury should receive physically transferred collateral"
+        );
+    }
 }
