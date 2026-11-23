@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
@@ -42,25 +41,31 @@ contract CoinEngineTest is Test {
         btcUsdPriceFeed = config.wBtcUsdPriceFeed;
         wEth = config.wEth;
         wBtc = config.wBtc;
+        treasury = makeAddr("treasury");
 
-        // Give the user some collateral
         ERC20Mock(wEth).mint(USER, ERC20_USER_BALANCE);
     }
 
     /*//////////////////////////////////////////////////////////////
-                               CONSTRUCTOR TESTS
-        //////////////////////////////////////////////////////////////*/
-    modifier mintedBSC() {
+                               MODIFIERS
+    //////////////////////////////////////////////////////////////*/
+    modifier collateralDeposited() {
         vm.startPrank(USER);
         ERC20Mock(wEth).approve(address(engine), AMOUNT_COLLATERAL);
         engine.depositCollateral(wEth, AMOUNT_COLLATERAL);
-        engine.mintBSC(100 ether); //100BSC
         vm.stopPrank();
         _;
     }
 
-    /// @dev USER deposits AMOUNT_COLLATERAL and mints AMOUNT_TO_MINT. HF ends up very safe
-    ///      so subsequent redeems won't revert on health factor.
+    modifier mintedBSC() {
+        vm.startPrank(USER);
+        ERC20Mock(wEth).approve(address(engine), AMOUNT_COLLATERAL);
+        engine.depositCollateral(wEth, AMOUNT_COLLATERAL);
+        engine.mintBSC(100 ether);
+        vm.stopPrank();
+        _;
+    }
+
     modifier depositedAndMinted() {
         vm.startPrank(USER);
         ERC20Mock(wEth).approve(address(engine), AMOUNT_COLLATERAL);
@@ -72,19 +77,15 @@ contract CoinEngineTest is Test {
 
     modifier mintedNearThreshold() {
         vm.startPrank(USER);
-
         ERC20Mock(wEth).approve(address(engine), AMOUNT_COLLATERAL);
-
         engine.depositCollateral(wEth, AMOUNT_COLLATERAL);
-
-        engine.mintBSC(10000 ether); // near bsc maximum minting allowed
-
+        engine.mintBSC(10000 ether);
         vm.stopPrank();
         _;
     }
 
     /*//////////////////////////////////////////////////////////////
-                           CONSTRUCTOR TESTS
+                       BATCH 1 — CONSTRUCTOR TESTS
     //////////////////////////////////////////////////////////////*/
     function test_Reverts_If_Token_Length_Does_Not_Match_PriceFeeds() public {
         tokenAddresses.push(wEth);
@@ -95,75 +96,91 @@ contract CoinEngineTest is Test {
         new CoinEngine(tokenAddresses, priceFeedAddresses, address(bsc), treasury);
     }
 
+    function test_constructorRevertsOnEmptyCollateral() public {
+        address[] memory empty = new address[](0);
+        vm.expectRevert(CoinEngine.CoinEngine__No_CollateralTokens.selector);
+        new CoinEngine(empty, empty, address(bsc), address(0xdead));
+    }
+
+    function test_constructorRevertsOnZeroBSC() public {
+        address[] memory tokens = new address[](1);
+        tokens[0] = wEth;
+        address[] memory feeds = new address[](1);
+        feeds[0] = ethUsdPriceFeed;
+        vm.expectRevert(CoinEngine.CoinEngine__Zero_Address.selector);
+        new CoinEngine(tokens, feeds, address(0), address(0xdead));
+    }
+
+    function test_constructorRevertsOnZeroCollateral() public {
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(0);
+        address[] memory feeds = new address[](1);
+        feeds[0] = ethUsdPriceFeed;
+        vm.expectRevert(CoinEngine.CoinEngine__Zero_Address.selector);
+        new CoinEngine(tokens, feeds, address(bsc), address(0xdead));
+    }
+
+    function test_constructorRevertsOnZeroPriceFeed() public {
+        address[] memory tokens = new address[](1);
+        tokens[0] = wEth;
+        address[] memory feeds = new address[](1);
+        feeds[0] = address(0);
+        vm.expectRevert(CoinEngine.CoinEngine__Zero_Address.selector);
+        new CoinEngine(tokens, feeds, address(bsc), address(0xdead));
+    }
+
+    function test_constructorRevertsOnZeroBadDebtSink() public {
+        address[] memory tokens = new address[](1);
+        tokens[0] = wEth;
+        address[] memory feeds = new address[](1);
+        feeds[0] = ethUsdPriceFeed;
+        vm.expectRevert(CoinEngine.CoinEngine__Zero_Address.selector);
+        new CoinEngine(tokens, feeds, address(bsc), address(0));
+    }
+
     function test_deployment_engineOwnsBsc() public view {
         assertEq(bsc.owner(), address(engine));
     }
 
     /*//////////////////////////////////////////////////////////////
-                           PRICE FEEDS TESTS
+                       PRICE FEED TESTS
     //////////////////////////////////////////////////////////////*/
     function testGetUsdValue() public view {
-        uint256 ethAmount = 15e18; // 15 ETH
-        // 15 ETH * 2000e8 = 30000e18
-        uint256 expectedUsdValue = 30000e18;
-        uint256 actualUsdValue = engine.getUsdValue(wEth, ethAmount);
-        assertEq(actualUsdValue, expectedUsdValue);
+        assertEq(engine.getUsdValue(wEth, 15e18), 30000e18);
     }
 
     function testGetCollateralAmountInUsd() public view {
-        uint256 collateralAmountInUsd = 100 ether;
-        // $2000/ETH $100 = ?eth
-        uint256 expectedWeth = 0.05 ether;
-        uint256 actualWeth = engine.getCollateralAmountFromUsd(wEth, collateralAmountInUsd);
-        assertEq(expectedWeth, actualWeth);
+        assertEq(engine.getCollateralAmountFromUsd(wEth, 100 ether), 0.05 ether);
     }
 
     function test_usdValueRespectsTokenDecimals() public {
-        // 1. Deploy an 8-dec ERC20
         ERC20MockEightDec wBtc8 = new ERC20MockEightDec();
-
-        // 2. Deploy a fresh price feed
         MockV3Aggregator feed = new MockV3Aggregator(8, 40000e8);
 
-        // 3. Deploy a fresh engine with just this one collateral
         address[] memory tokens = new address[](1);
         tokens[0] = address(wBtc8);
         address[] memory feeds = new address[](1);
         feeds[0] = address(feed);
 
         CoinEngine freshEngine = new CoinEngine(tokens, feeds, address(bsc), address(0xdead));
-
-        // 4. Assert
         assertEq(freshEngine.getUsdValue(address(wBtc8), 1e8), 40000e18);
-        // 1e8 = 1 whole BTC in 8-dec, price = $40,000, expected = 40000e18
     }
 
     /*//////////////////////////////////////////////////////////////
-                        DEPOSIT COLLATERAL TESTS
+                       BATCH 2 — DEPOSIT EDGE CASES
     //////////////////////////////////////////////////////////////*/
     function testRevertIfDepositZeroV1() external {
-        // good practice man!
         vm.startPrank(USER);
         ERC20Mock(wEth).approve(address(engine), AMOUNT_COLLATERAL);
-
         vm.expectRevert(CoinEngine.CoinEngine__Must_Be_More_Than_Zero.selector);
         engine.depositCollateral(wEth, 0);
         vm.stopPrank();
     }
 
     function testRevertIfDepositZero() external {
-        // the function reverts before the safeTransferFrom is called, so we don't need to approve any tokens for this test.
         vm.prank(USER);
         vm.expectRevert(CoinEngine.CoinEngine__Must_Be_More_Than_Zero.selector);
         engine.depositCollateral(wEth, 0);
-    }
-
-    modifier collateralDeposited() {
-        vm.startPrank(USER);
-        ERC20Mock(wEth).approve(address(engine), AMOUNT_COLLATERAL);
-        engine.depositCollateral(wEth, AMOUNT_COLLATERAL);
-        vm.stopPrank();
-        _;
     }
 
     function testRevertsWithUnapprovedCollateral() public {
@@ -174,84 +191,185 @@ contract CoinEngineTest is Test {
         vm.stopPrank();
     }
 
+    function test_depositIncrementsBothLedgers() public {
+        uint256 totalBefore = engine.getTotalUserCollateral(wEth);
+        vm.startPrank(USER);
+        ERC20Mock(wEth).approve(address(engine), 1e18);
+        engine.depositCollateral(wEth, 1e18);
+        vm.stopPrank();
+        assertEq(engine.getTotalUserCollateral(wEth), totalBefore + 1e18);
+        assertEq(ERC20Mock(wEth).balanceOf(address(engine)), totalBefore + 1e18);
+    }
+
+    function test_depositRevertsWhenUserHasInsufficientBalance() public {
+        address broke = makeAddr("broke");
+        vm.startPrank(broke);
+        ERC20Mock(wEth).approve(address(engine), 1e18);
+        vm.expectRevert();
+        engine.depositCollateral(wEth, 1e18);
+        vm.stopPrank();
+    }
+
+    function test_depositAccumulatesAcrossCalls() public {
+        vm.startPrank(USER);
+        ERC20Mock(wEth).approve(address(engine), 2e18);
+        engine.depositCollateral(wEth, 1e18);
+        engine.depositCollateral(wEth, 1e18);
+        vm.stopPrank();
+        assertEq(engine.getCollateralBalanceOfUser(wEth, USER), 2e18);
+    }
+
+    function test_depositDifferentTokensTrackedSeparately() public {
+        vm.startPrank(USER);
+        ERC20Mock(wEth).approve(address(engine), 1e18);
+        engine.depositCollateral(wEth, 1e18);
+        vm.stopPrank();
+        assertEq(engine.getCollateralBalanceOfUser(wEth, USER), 1e18);
+        assertEq(engine.getCollateralBalanceOfUser(wBtc, USER), 0);
+    }
+
+    function test_depositEmitsCollateralDepositedWithCorrectArgs() public {
+        vm.startPrank(USER);
+        ERC20Mock(wEth).approve(address(engine), 1e18);
+        vm.expectEmit(true, true, true, true, address(engine));
+        emit CoinEngine.CollateralDeposited(USER, wEth, 1e18);
+        engine.depositCollateral(wEth, 1e18);
+        vm.stopPrank();
+    }
+
     function testDepositCollateralAndGetAccountInfo() public collateralDeposited {
         (uint256 totalBscMinted, uint256 collateralValueInUsd) = engine.getAccountInformation(USER);
-
-        uint256 expectedTotalBscMinted = 0;
-        uint256 expectedDepositAmount = engine.getCollateralAmountFromUsd(wEth, collateralValueInUsd);
-
-        assertEq(totalBscMinted, expectedTotalBscMinted);
-        assertEq(AMOUNT_COLLATERAL, expectedDepositAmount);
+        assertEq(totalBscMinted, 0);
+        assertEq(AMOUNT_COLLATERAL, engine.getCollateralAmountFromUsd(wEth, collateralValueInUsd));
     }
 
     function testDepositCollateralEmitsEvent() public {
         vm.startPrank(USER);
-
         ERC20Mock(wEth).approve(address(engine), AMOUNT_COLLATERAL);
-
         vm.expectEmit(true, true, true, false);
-
         emit CoinEngine.CollateralDeposited(USER, wEth, AMOUNT_COLLATERAL);
-
         engine.depositCollateral(wEth, AMOUNT_COLLATERAL);
-
         vm.stopPrank();
     }
 
     function testDepositCollateralUpdatesBalance() public collateralDeposited {
-        uint256 balance = engine.getCollateralBalanceOfUser(wEth, USER);
-
-        assertEq(balance, AMOUNT_COLLATERAL);
+        assertEq(engine.getCollateralBalanceOfUser(wEth, USER), AMOUNT_COLLATERAL);
     }
 
+    /*//////////////////////////////////////////////////////////////
+                       BATCH 3 — REDEEM EDGE CASES
+    //////////////////////////////////////////////////////////////*/
+    function test_redeemRevertsOnInsufficientBalance() public collateralDeposited {
+        vm.prank(USER);
+        vm.expectRevert(CoinEngine.CoinEngine__InsufficientCollateral.selector);
+        engine.redeemCollateral(wEth, AMOUNT_COLLATERAL + 1);
+    }
+
+    function test_redeemRevertsOnZeroAmount() public collateralDeposited {
+        vm.prank(USER);
+        vm.expectRevert(CoinEngine.CoinEngine__Must_Be_More_Than_Zero.selector);
+        engine.redeemCollateral(wEth, 0);
+    }
+
+    function test_redeemDecrementsUserCollateralLedger() public collateralDeposited {
+        vm.prank(USER);
+        engine.redeemCollateral(wEth, 1e18);
+        assertEq(engine.getCollateralBalanceOfUser(wEth, USER), AMOUNT_COLLATERAL - 1e18);
+    }
+
+    function test_redeemTransfersCorrectAmountAfterFee() public collateralDeposited {
+        uint256 balanceBefore = ERC20Mock(wEth).balanceOf(USER);
+        vm.prank(USER);
+        engine.redeemCollateral(wEth, 10e18);
+        uint256 received = ERC20Mock(wEth).balanceOf(USER) - balanceBefore;
+        assertEq(received, 10e18 - 1e16);
+    }
+
+    function test_redeemEmitsCollateralRedeemedWithNetAmount() public collateralDeposited {
+        uint256 netAmount = 10e18 - (10e18 * 10 / 10000);
+        vm.prank(USER);
+        vm.expectEmit(true, true, true, true, address(engine));
+        emit CoinEngine.CollateralRedeemed(USER, USER, wEth, netAmount);
+        engine.redeemCollateral(wEth, 10e18);
+    }
+
+    function test_redeemRevertsIfHealthFactorWouldBreak() public mintedNearThreshold {
+        vm.prank(USER);
+        vm.expectRevert();
+        engine.redeemCollateral(wEth, AMOUNT_COLLATERAL);
+    }
+
+    function testRedeemRevertsIfHealthFactorBreaks() public mintedBSC {
+        vm.startPrank(USER);
+        vm.expectRevert();
+        engine.redeemCollateral(wEth, AMOUNT_COLLATERAL);
+        vm.stopPrank();
+    }
+
+    function testCanRedeemCollateral() public mintedBSC {
+        vm.startPrank(USER);
+        bsc.approve(address(engine), 100 ether);
+        engine.burnBSC(100 ether);
+        engine.redeemCollateral(wEth, AMOUNT_COLLATERAL);
+        vm.stopPrank();
+        assertEq(engine.getCollateralBalanceOfUser(wEth, USER), 0);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                       BATCH 4 — MINT / BURN EDGE CASES
+    //////////////////////////////////////////////////////////////*/
     function testRevertsIfMintAmountIsZero() public {
         vm.prank(USER);
         vm.expectRevert(CoinEngine.CoinEngine__Must_Be_More_Than_Zero.selector);
-
         engine.mintBSC(0);
     }
 
-    // User deposits $20,000 collateral
-    // Threshold = 50%.
-    // Max mint allowed = $10,000
-    // If user tries minting above that → revert
     function testRevertsIfMintBreaksHealthFactor() public collateralDeposited {
-        uint256 amountToMint = 20000 ether;
-
         vm.startPrank(USER);
         vm.expectRevert();
-        engine.mintBSC(amountToMint);
+        engine.mintBSC(20000 ether);
         vm.stopPrank();
     }
 
     function testMintBSCUpdatesMintedAmount() public collateralDeposited {
-        uint256 amountToMint = 100 ether;
-
         vm.prank(USER);
-        engine.mintBSC(amountToMint);
-
+        engine.mintBSC(100 ether);
         (uint256 totalMinted,) = engine.getAccountInformation(USER);
-
-        assertEq(totalMinted, amountToMint);
+        assertEq(totalMinted, 100 ether);
     }
 
     function testMintBSCTransfersTokensToUser() public collateralDeposited {
-        uint256 amountToMint = 100 ether;
-
         vm.prank(USER);
-        engine.mintBSC(amountToMint);
-
-        uint256 userBalance = bsc.balanceOf(USER);
-        assertEq(userBalance, amountToMint);
+        engine.mintBSC(100 ether);
+        assertEq(bsc.balanceOf(USER), 100 ether);
     }
 
-    /*//////////////////////////////////////////////////////////////
-                               BURN TESTS
-    //////////////////////////////////////////////////////////////*/
+    function test_mintAccumulatesAcrossCalls() public collateralDeposited {
+        vm.startPrank(USER);
+        engine.mintBSC(50e18);
+        engine.mintBSC(50e18);
+        vm.stopPrank();
+        (uint256 totalMinted,) = engine.getAccountInformation(USER);
+        assertEq(totalMinted, 100e18);
+    }
+
+    function test_mintUpdatesMintedAmountByExactValue() public collateralDeposited {
+        vm.prank(USER);
+        engine.mintBSC(123e18);
+        (uint256 totalMinted,) = engine.getAccountInformation(USER);
+        assertEq(totalMinted, 123e18);
+    }
+
+    function test_mintIncreasesBSCSupply() public collateralDeposited {
+        uint256 supplyBefore = bsc.totalSupply();
+        vm.prank(USER);
+        engine.mintBSC(30e18);
+        assertEq(bsc.totalSupply(), supplyBefore + 30e18);
+    }
+
     function testRevertsIfBurnAmountIsZero() public {
         vm.prank(USER);
         vm.expectRevert(CoinEngine.CoinEngine__Must_Be_More_Than_Zero.selector);
-
         engine.burnBSC(0);
     }
 
@@ -264,26 +382,28 @@ contract CoinEngineTest is Test {
         assertEq(totalMinted, 0);
     }
 
-    /*//////////////////////////////////////////////////////////////
-                        REDEEM COLLATERAL TESTS
-    //////////////////////////////////////////////////////////////*/
-    function testRedeemRevertsIfHealthFactorBreaks() public mintedBSC {
+    function test_burnReducesDebt() public mintedBSC {
         vm.startPrank(USER);
-        vm.expectRevert();
-        engine.redeemCollateral(wEth, AMOUNT_COLLATERAL);
+        bsc.approve(address(engine), 50e18);
+        engine.burnBSC(50e18);
         vm.stopPrank();
+        (uint256 remaining,) = engine.getAccountInformation(USER);
+        assertEq(remaining, 50e18);
     }
 
-    function testCanRedeemCollateral() public mintedBSC {
+    function test_burnRevertsIfUserLacksBSC() public collateralDeposited {
+        vm.prank(USER);
+        vm.expectRevert();
+        engine.burnBSC(1e18);
+    }
+
+    function test_burnReducesBSCSupply() public mintedBSC {
+        uint256 supplyBefore = bsc.totalSupply();
         vm.startPrank(USER);
-        bsc.approve(address(engine), 100 ether); //allowing engine to use the 100BSC
-        engine.burnBSC(100 ether);
-        engine.redeemCollateral(wEth, AMOUNT_COLLATERAL);
+        bsc.approve(address(engine), 30e18);
+        engine.burnBSC(30e18);
         vm.stopPrank();
-
-        uint256 balance = engine.getCollateralBalanceOfUser(USER, wEth);
-
-        assertEq(balance, 0);
+        assertEq(bsc.totalSupply(), supplyBefore - 30e18);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -291,22 +411,17 @@ contract CoinEngineTest is Test {
     //////////////////////////////////////////////////////////////*/
     function testDepositAndMintWorksTogether() public {
         uint256 amountToMint = 100 ether;
-
         vm.startPrank(USER);
         ERC20Mock(wEth).approve(address(engine), AMOUNT_COLLATERAL);
         engine.depositCollateralAndMintBSC(wEth, AMOUNT_COLLATERAL, amountToMint);
         vm.stopPrank();
-
         (uint256 totalMinted,) = engine.getAccountInformation(USER);
         assertEq(totalMinted, amountToMint);
     }
 
-    /*//////////////////////////////////////////////////////////////
-                    REDEEM COLLATERAL FROM BSC TESTS
-    //////////////////////////////////////////////////////////////*/
     function testMustReedeemMoreThanZero() public mintedBSC {
         vm.startPrank(USER);
-        bsc.approve(address(engine), 100 ether); // amount to mint == 100 ether(BSC)
+        bsc.approve(address(engine), 100 ether);
         vm.expectRevert(CoinEngine.CoinEngine__Must_Be_More_Than_Zero.selector);
         engine.redeemBSCForCollateral(wEth, AMOUNT_COLLATERAL, 0);
         vm.stopPrank();
@@ -317,91 +432,301 @@ contract CoinEngineTest is Test {
         bsc.approve(address(engine), 100 ether);
         engine.redeemBSCForCollateral(wEth, AMOUNT_COLLATERAL, 100 ether);
         vm.stopPrank();
-
         (uint256 minted,) = engine.getAccountInformation(USER);
-
         assertEq(minted, 0);
     }
 
     /*//////////////////////////////////////////////////////////////
-                          HEALTH FACTOR TESTS
+                       BATCH 5 — LIQUIDATION EDGE CASES
     //////////////////////////////////////////////////////////////*/
-    function testHealthFactorReturnsMaxIfNoMinted() public collateralDeposited {
-        uint256 healthFactor = engine.getHealthFactor(USER);
+    function test_liquidateRevertsOnZeroDebtToCover() public {
+        address user = makeAddr("user1");
+        deal(wEth, user, 1e18);
+        vm.startPrank(user);
+        ERC20Mock(wEth).approve(address(engine), 1e18);
+        engine.depositCollateral(wEth, 1e18);
+        engine.mintBSC(500e18);
+        vm.stopPrank();
 
-        assertEq(healthFactor, type(uint256).max);
+        MockV3Aggregator(ethUsdPriceFeed).updateAnswer(200e8);
+
+        vm.prank(makeAddr("liquidator"));
+        vm.expectRevert(CoinEngine.CoinEngine__Must_Be_More_Than_Zero.selector);
+        engine.liquidate(wEth, user, 0);
     }
 
-    function testHealthFactorCanDecreaseBelowOne() public mintedNearThreshold {
-        int256 ethUsdTankedPrice = 500e8; // $500/ETH
+    function test_liquidateRevertsIfHealthFactorIsOK() public collateralDeposited {
+        vm.prank(USER);
+        engine.mintBSC(100e18);
+        vm.prank(makeAddr("liquidator"));
+        vm.expectRevert(CoinEngine.CoinEngine__Health_Factor_Is_OK.selector);
+        engine.liquidate(wEth, USER, 50e18);
+    }
 
-        // we need to be 200% overcollaterized at all time
+    function test_liquidateRevertsIfNoCollateralForThatToken() public {
+        address user = makeAddr("noCollateralForToken");
+        deal(wBtc, user, 1e8);
+        vm.startPrank(user);
+        ERC20Mock(wBtc).approve(address(engine), 1e8);
+        engine.depositCollateral(wBtc, 1e8);
+        engine.mintBSC(10000e18);
+        vm.stopPrank();
 
-        MockV3Aggregator(ethUsdPriceFeed).updateAnswer(ethUsdTankedPrice);
+        MockV3Aggregator(btcUsdPriceFeed).updateAnswer(5000e8);
 
-        uint256 userHealthFactor = engine.getHealthFactor(USER);
-        assert(userHealthFactor < 1e18);
+        vm.prank(makeAddr("liquidator"));
+        vm.expectRevert(CoinEngine.CoinEngine__InsufficientCollateral.selector);
+        engine.liquidate(wEth, user, 1000e18);
+    }
+
+    function test_liquidatePartialDebtSucceeds() public {
+        address user = makeAddr("partial");
+        deal(wEth, user, 1e18);
+        vm.startPrank(user);
+        ERC20Mock(wEth).approve(address(engine), 1e18);
+        engine.depositCollateral(wEth, 1e18);
+        engine.mintBSC(1000e18);
+        vm.stopPrank();
+
+        MockV3Aggregator(ethUsdPriceFeed).updateAnswer(1500e8);
+
+        address liquidator = makeAddr("liq");
+        deal(address(bsc), liquidator, 500e18);
+        vm.startPrank(liquidator);
+        bsc.approve(address(engine), 500e18);
+        engine.liquidate(wEth, user, 500e18);
+        vm.stopPrank();
+
+        (uint256 remainingDebt,) = engine.getAccountInformation(user);
+        assertEq(remainingDebt, 500e18);
+    }
+
+    function test_liquidateBurnsLiquidatorBSC() public {
+        address user = makeAddr("burnCheck");
+        deal(wEth, user, 1e18);
+        vm.startPrank(user);
+        ERC20Mock(wEth).approve(address(engine), 1e18);
+        engine.depositCollateral(wEth, 1e18);
+        engine.mintBSC(1000e18);
+        vm.stopPrank();
+
+        MockV3Aggregator(ethUsdPriceFeed).updateAnswer(500e8);
+
+        address liquidator = makeAddr("liq");
+        deal(address(bsc), liquidator, 2000e18);
+        uint256 supplyBefore = bsc.totalSupply();
+
+        vm.startPrank(liquidator);
+        bsc.approve(address(engine), 2000e18);
+        engine.liquidate(wEth, user, 1000e18);
+        vm.stopPrank();
+
+        assertLt(bsc.totalSupply(), supplyBefore);
+    }
+
+    function test_liquidateTransfersCollateralToLiquidator() public {
+        address user = makeAddr("collTransfer");
+        deal(wEth, user, 1e18);
+        vm.startPrank(user);
+        ERC20Mock(wEth).approve(address(engine), 1e18);
+        engine.depositCollateral(wEth, 1e18);
+        engine.mintBSC(1000e18);
+        vm.stopPrank();
+
+        MockV3Aggregator(ethUsdPriceFeed).updateAnswer(500e8);
+
+        address liquidator = makeAddr("liq");
+        deal(address(bsc), liquidator, 2000e18);
+        uint256 collBefore = ERC20Mock(wEth).balanceOf(liquidator);
+
+        vm.startPrank(liquidator);
+        bsc.approve(address(engine), 2000e18);
+        engine.liquidate(wEth, user, 1000e18);
+        vm.stopPrank();
+
+        assertGt(ERC20Mock(wEth).balanceOf(liquidator), collBefore);
+    }
+
+    function test_liquidateRecordsBadDebtWhenReserveEmpty() public {
+        address user = makeAddr("badDebt");
+        deal(wEth, user, 1e18);
+        vm.startPrank(user);
+        ERC20Mock(wEth).approve(address(engine), 1e18);
+        engine.depositCollateral(wEth, 1e18);
+        engine.mintBSC(1000e18);
+        vm.stopPrank();
+
+        MockV3Aggregator(ethUsdPriceFeed).updateAnswer(500e8);
+
+        address liquidator = makeAddr("liq");
+        deal(address(bsc), liquidator, 2000e18);
+        vm.startPrank(liquidator);
+        bsc.approve(address(engine), 2000e18);
+        engine.liquidate(wEth, user, 1000e18);
+        vm.stopPrank();
+
+        assertGt(engine.getTotalBadDebt(), 0);
     }
 
     function test_liquidateBankruptPositionSeizesAllCollateral() public {
-        // ── Setup: user deposits 1 ETH, mints at HF ≈ 1.0
         address user = makeAddr("bankruptUser");
-        uint256 depositAmount = 1e18; // 1 ETH
+        uint256 depositAmount = 1e18;
         deal(wEth, user, depositAmount);
 
         vm.startPrank(user);
         ERC20(wEth).approve(address(engine), depositAmount);
         engine.depositCollateral(wEth, depositAmount);
-        // Mint up to HF ≈ 1.0: debt = (collateral USD × 50%) → HF = 1.0
-        // With ETH = $2000, collateral = $2000, max safe debt = $1000
         engine.mintBSC(1000e18);
         vm.stopPrank();
 
-        // ── Crash ETH from $2000 to $800 (60% drop)
         MockV3Aggregator(engine.getCollateralTokenPriceFeed(wEth)).updateAnswer(800e8);
 
-        // Now: collateral = $800, debt = $1000.
-        // HF = (800 × 0.5) / 1000 = 0.4  → bankrupt territory (< 0.55)
-
-        // ── Liquidator steps in
         address liquidator = makeAddr("liquidator");
-        deal(address(bsc), liquidator, 1000e18); // give liquidator BSC to burn
-
+        deal(address(bsc), liquidator, 1000e18);
         uint256 liquidatorWethBefore = ERC20(wEth).balanceOf(liquidator);
 
         vm.startPrank(liquidator);
         ERC20(bsc).approve(address(engine), 1000e18);
-        engine.liquidate(wEth, user, 1000e18); // try to cover all debt
+        engine.liquidate(wEth, user, 1000e18);
         vm.stopPrank();
 
-        // Calculate the expected debt burn using the same collateral cap.
         uint256 cappedCollateralForDebt = depositAmount * 100 / 110;
-
         uint256 expectedDebtBurned = engine.getUsdValue(wEth, cappedCollateralForDebt);
-
         uint256 expectedRemainingDebt = 1000e18 - expectedDebtBurned;
 
-        // ── Liquidation assertions
         uint256 liquidatorWethAfter = ERC20(wEth).balanceOf(liquidator);
-
         assertEq(engine.getCollateralBalanceOfUser(wEth, user), 0);
-
         assertEq(liquidatorWethAfter - liquidatorWethBefore, depositAmount);
 
-        // User's remaining debt should equal the recognized bad debt.
         (uint256 userRemainingDebt, uint256 userCollateralUsd) = engine.getAccountInformation(user);
-
         assertEq(userRemainingDebt, expectedRemainingDebt);
         assertEq(engine.getTotalBadDebt(), expectedRemainingDebt);
         assertEq(userCollateralUsd, 0);
     }
 
     /*//////////////////////////////////////////////////////////////
-                        ABSORPTION TESTS
+                       BATCH 6 — HEALTH FACTOR MATH
     //////////////////////////////////////////////////////////////*/
+    function testHealthFactorReturnsMaxIfNoMinted() public collateralDeposited {
+        assertEq(engine.getHealthFactor(USER), type(uint256).max);
+    }
 
-    /// @dev Creates a bad-debt event: fresh user deposits, mints, price crashes, liquidator covers.
-    ///      Returns the user address. Uses a unique address per call so tests can chain multiple events.
+    function testHealthFactorCanDecreaseBelowOne() public mintedNearThreshold {
+        MockV3Aggregator(ethUsdPriceFeed).updateAnswer(500e8);
+        assertLt(engine.getHealthFactor(USER), 1e18);
+    }
+
+    function test_hfEqualsOneAtThreshold() public {
+        vm.startPrank(USER);
+        ERC20Mock(wEth).approve(address(engine), 1e18);
+        engine.depositCollateral(wEth, 1e18);
+        engine.mintBSC(1000e18);
+        vm.stopPrank();
+        assertEq(engine.getHealthFactor(USER), 1e18);
+    }
+
+    function test_hfEqualsTwoAtSafePosition() public {
+        vm.startPrank(USER);
+        ERC20Mock(wEth).approve(address(engine), 1e18);
+        engine.depositCollateral(wEth, 1e18);
+        engine.mintBSC(500e18);
+        vm.stopPrank();
+        assertEq(engine.getHealthFactor(USER), 2e18);
+    }
+
+    function test_hfImprovesAfterBurn() public mintedBSC {
+        uint256 hfBefore = engine.getHealthFactor(USER);
+        vm.startPrank(USER);
+        bsc.approve(address(engine), 50e18);
+        engine.burnBSC(50e18);
+        vm.stopPrank();
+        assertGt(engine.getHealthFactor(USER), hfBefore);
+    }
+
+    function test_hfDegradesAfterMint() public collateralDeposited {
+        uint256 hfBefore = engine.getHealthFactor(USER);
+        vm.prank(USER);
+        engine.mintBSC(100e18);
+        assertLt(engine.getHealthFactor(USER), hfBefore);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                       BATCH 7 — GETTERS
+    //////////////////////////////////////////////////////////////*/
+    function test_getCollateralTokensReturnsBoth() public view {
+        address[] memory tokens = engine.getCollateralTokens();
+        assertEq(tokens.length, 2);
+        assertEq(tokens[0], wEth);
+        assertEq(tokens[1], wBtc);
+    }
+
+    function test_getBSCAddressReturnsBSC() public view {
+        assertEq(engine.getBSCAddress(), address(bsc));
+    }
+
+    function test_getBadDebtSinkReturnsNonZero() public view {
+        assertTrue(engine.getBadDebtSink() != address(0));
+    }
+
+    function test_getRecognizedBadDebtStartsAtZero() public view {
+        assertEq(engine.getRecognizedBadDebt(USER), 0);
+    }
+
+    function test_getTotalUserCollateralTracksDeposits() public {
+        vm.startPrank(USER);
+        ERC20Mock(wEth).approve(address(engine), 1e18);
+        engine.depositCollateral(wEth, 1e18);
+        vm.stopPrank();
+        assertEq(engine.getTotalUserCollateral(wEth), 1e18);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                       BATCH 8 — ORACLE INTEGRATION
+    //////////////////////////////////////////////////////////////*/
+    function test_mintRevertsOnStalePrice() public collateralDeposited {
+        vm.warp(block.timestamp + 2 hours);
+        vm.prank(USER);
+        vm.expectRevert();
+        engine.mintBSC(100e18);
+    }
+
+    function test_getUsdValueRevertsOnStalePrice() public {
+        vm.warp(block.timestamp + 2 hours);
+        vm.expectRevert();
+        engine.getUsdValue(wEth, 1e18);
+    }
+
+    function test_getUsdValueRevertsOnZeroPrice() public {
+        MockV3Aggregator(ethUsdPriceFeed).updateAnswer(0);
+        vm.expectRevert();
+        engine.getUsdValue(wEth, 1e18);
+    }
+
+    function test_getUsdValueRevertsOnNegativePrice() public {
+        MockV3Aggregator(ethUsdPriceFeed).updateAnswer(-1);
+        vm.expectRevert();
+        engine.getUsdValue(wEth, 1e18);
+    }
+
+    function test_liquidateRevertsOnStalePrice() public {
+        address user = makeAddr("staleUser");
+        deal(wEth, user, 1e18);
+        vm.startPrank(user);
+        ERC20Mock(wEth).approve(address(engine), 1e18);
+        engine.depositCollateral(wEth, 1e18);
+        engine.mintBSC(1000e18);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 2 hours);
+
+        vm.prank(makeAddr("liquidator"));
+        vm.expectRevert();
+        engine.liquidate(wEth, user, 500e18);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                       BATCH 9 — RESERVE ADDITIONAL
+    //////////////////////////////////////////////////////////////*/
     function _createBadDebt(uint256 depositAmount, uint256 mintAmount, int256 newPrice)
         internal
         returns (address badUser)
@@ -419,74 +744,95 @@ contract CoinEngineTest is Test {
         MockV3Aggregator(ethUsdPriceFeed).updateAnswer(newPrice);
 
         address liquidator = makeAddr("liquidator");
-        deal(wEth, liquidator, 1e18); // Give liquidator some collateral
+        deal(wEth, liquidator, 1e18);
+        deal(address(bsc), liquidator, mintAmount * 2);
         vm.startPrank(liquidator);
         ERC20Mock(wEth).approve(address(engine), 1e18);
-        engine.depositCollateral(wEth, 1e18); // Liquidator deposits collateral
-
-        deal(address(bsc), liquidator, mintAmount * 2);
+        engine.depositCollateral(wEth, 1e18);
         bsc.approve(address(engine), mintAmount * 2);
         engine.liquidate(wEth, badUser, mintAmount);
         vm.stopPrank();
     }
 
-    /// @notice Reserve is large enough → absorbs bad debt fully. No uncovered debt recorded.
-    /// @dev Setup numbers (price = $500 during crash):
-    ///      USER redeems 5 ETH → reserve = 0.005 ETH = 5e15 wei
-    ///      Bad debt user: 0.02 ETH deposit, 10 BSC debt, HF = 0.5
-    ///      After liquidation: ~0.0018 ETH of uncovered debt = 1.8e15 wei
-    ///      Reserve (5e15) > bad debt (1.8e15) → full absorption
     function test_reserveAbsorbsBadDebtFully() public mintedBSC {
         vm.prank(USER);
         engine.redeemCollateral(wEth, 5e18);
-
         uint256 reserveBefore = engine.getReserveBalance(wEth);
         uint256 treasuryBefore = ERC20Mock(wEth).balanceOf(engine.getBadDebtSink());
-        assertGt(reserveBefore, 0, "reserve should have accrued");
+        assertGt(reserveBefore, 0);
 
         _createBadDebt(0.02e18, 10e18, 500e8);
 
-        assertLt(engine.getReserveBalance(wEth), reserveBefore, "reserve should decrease");
-        assertEq(engine.getTotalBadDebt(), 0, "no uncovered bad debt - reserve covered it all");
-        assertGt(
-            ERC20Mock(wEth).balanceOf(engine.getBadDebtSink()),
-            treasuryBefore,
-            "treasury should receive absorbed collateral"
-        );
+        assertLt(engine.getReserveBalance(wEth), reserveBefore);
+        assertEq(engine.getTotalBadDebt(), 0);
+        assertGt(ERC20Mock(wEth).balanceOf(engine.getBadDebtSink()), treasuryBefore);
     }
 
-    /// @notice Reserve is too small → depleted to zero, rest recorded as uncovered debt.
-    /// @dev Tiny reserve: USER redeems 0.05 ETH → fee = 5e13 wei
-    ///      Large bad debt: 1 ETH deposit, 1000 BSC, crash to $500 → HF = 0.25
-    ///      Bad debt in ETH terms ≫ reserve → partial absorption, remainder tracked
     function test_reserveDepletedThenUncoveredBadDebtRecorded() public mintedBSC {
         vm.prank(USER);
         engine.redeemCollateral(wEth, 0.05e18);
 
-        uint256 reserveBefore = engine.getReserveBalance(wEth);
-        assertGt(reserveBefore, 0, "reserve should have accrued");
-
         _createBadDebt(1e18, 1000e18, 500e8);
 
-        assertEq(engine.getReserveBalance(wEth), 0, "reserve should be depleted");
-        assertGt(engine.getTotalBadDebt(), 0, "uncovered bad debt should be recorded");
+        assertEq(engine.getReserveBalance(wEth), 0);
+        assertGt(engine.getTotalBadDebt(), 0);
     }
 
-    /// @notice Physical collateral flows to the treasury address (not address(0xdead)),
-    ///         proving the sink transfer works with a real destination.
     function test_reserveTransferredToTreasuryOnAbsorption() public mintedBSC {
         vm.prank(USER);
-        engine.redeemCollateral(wEth, 5e18); // Redeem half — HF stays healthy
+        engine.redeemCollateral(wEth, 5e18);
 
         address sink = engine.getBadDebtSink();
         uint256 sinkBefore = ERC20Mock(wEth).balanceOf(sink);
 
         _createBadDebt(0.02e18, 10e18, 500e8);
 
-        assertGt(
-            ERC20Mock(wEth).balanceOf(engine.getBadDebtSink()),
-            sinkBefore,
-            "treasury should receive physically transferred collateral"
-        );
+        assertGt(ERC20Mock(wEth).balanceOf(sink), sinkBefore);
+    }
+
+    function test_reserveAccruesOnEveryRedeem() public mintedBSC {
+        vm.prank(USER);
+        engine.redeemCollateral(wEth, 1e18);
+        uint256 afterFirst = engine.getReserveBalance(wEth);
+        assertEq(afterFirst, 1e15);
+
+        vm.prank(USER);
+        engine.redeemCollateral(wEth, 1e18);
+        assertEq(engine.getReserveBalance(wEth), afterFirst + 1e15);
+    }
+
+    function test_reserveEmitsAccruedEvent() public mintedBSC {
+        uint256 expectedFee = 1e15;
+        vm.prank(USER);
+        vm.expectEmit(true, false, false, true, address(engine));
+        emit CoinEngine.ReserveAccrued(wEth, expectedFee);
+        engine.redeemCollateral(wEth, 1e18);
+    }
+
+    function test_reserveDustAfterFullAbsorption() public mintedBSC {
+        vm.prank(USER);
+        engine.redeemCollateral(wEth, 5e18);
+
+        _createBadDebt(0.02e18, 10e18, 500e8);
+
+        assertLt(engine.getReserveBalance(wEth), 5e15);
+        assertEq(engine.getTotalBadDebt(), 0);
+    }
+
+    function test_reserveStaysZeroForTokenWithNoActivity() public mintedBSC {
+        assertEq(engine.getReserveBalance(wBtc), 0);
+    }
+
+    function test_reservePersistenceAcrossUserInteractions() public mintedBSC {
+        vm.prank(USER);
+        engine.redeemCollateral(wEth, 2e18);
+        uint256 reserveAfterRedeem = engine.getReserveBalance(wEth);
+
+        vm.startPrank(USER);
+        ERC20Mock(wEth).approve(address(engine), 1e18);
+        engine.depositCollateral(wEth, 1e18);
+        vm.stopPrank();
+
+        assertEq(engine.getReserveBalance(wEth), reserveAfterRedeem);
     }
 }

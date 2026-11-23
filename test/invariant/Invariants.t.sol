@@ -80,8 +80,21 @@ contract InvariantsTest is StdInvariant, Test {
     function invariant_engineBalanceMatchesAccounting() public view {
         address[] memory tokens = engine.getCollateralTokens();
         for (uint256 i = 0; i < tokens.length; i++) {
-            uint256 physical = IERC20(tokens[i]).balanceOf(address(engine));
-            uint256 accounting = engine.getTotalUserCollateral(tokens[i]) + engine.getReserveBalance(tokens[i]);
+            address token = tokens[i];
+            uint256 physical = IERC20(token).balanceOf(address(engine));
+            uint256 userCollateral = engine.getTotalUserCollateral(token);
+            uint256 reserve = engine.getReserveBalance(token);
+            uint256 accounting = userCollateral + reserve;
+
+            // Detailed failure info in case of mismatch
+            if (physical != accounting) {
+                console.log("--- INVARIANT FAILURE ---");
+                console.log("Token:", token);
+                console.log("Physical:", physical);
+                console.log("UserCollateral:", userCollateral);
+                console.log("Reserve:", reserve);
+                console.log("Accounting:", accounting);
+            }
             assertEq(physical, accounting, "balance/accounting mismatch");
         }
     }
