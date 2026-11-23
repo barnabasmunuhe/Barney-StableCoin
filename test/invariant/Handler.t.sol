@@ -56,7 +56,10 @@ contract Handler is Test {
         vm.stopPrank();
         // this will double push if the same address deposits twice
         // Check if someone has already deposited collateral
-        usersWithCollateralDeposited.push(msg.sender);
+        if (engine.getCollateralBalanceOfUser(address(collateral), msg.sender) == amountCollateral) {
+            // first deposit for this user+token combo (or they had exactly this much before, unlikely)
+            usersWithCollateralDeposited.push(msg.sender);
+        }
     }
 
     /**

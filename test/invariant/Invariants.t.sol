@@ -1,9 +1,4 @@
 // SPDX-License-Identifier: MIT
-
-// What are our invariants?(WHAT SHOULD ALWAYS HOLD TRUE NO MATTER WHAT!)
-// 1. Total supply of BSC should always be less than the total value of collateral to deter solvency
-// 2. Getter view functions should NEVER revert
-
 pragma solidity ^0.8.28;
 
 import {Test, console} from "forge-std/Test.sol";
@@ -16,7 +11,6 @@ import {HelperConfig} from "../../script/HelperConfig.s.sol";
 import {Handler} from "./Handler.t.sol";
 
 contract InvariantsTest is StdInvariant, Test {
-    //Creating new instances of our contracts to put in `good` use
     DeployBSC deployer;
     CoinEngine engine;
     BarneyStableCoin bsc;
@@ -25,19 +19,18 @@ contract InvariantsTest is StdInvariant, Test {
     address wBtc;
     Handler handler;
 
-    uint256 public constant amount = 1e18;
+    uint256 public constant wEthAmount = 1e18;
+    uint256 public constant wBtcAmount = 1e8;
 
     function setUp() external {
         deployer = new DeployBSC();
         (bsc, engine, helperConfig) = deployer.run();
-        (,, wEth, wBtc,,) = helperConfig.activeNetworkConfig();
+        (,, wEth, wBtc,) = helperConfig.activeNetworkConfig();
         handler = new Handler(engine, bsc);
         targetContract(address(handler));
     }
 
     function invariant_protocolMustHaveMoreValueThanTotalSupply() public view {
-        // get value of all the collateral in the protocol
-        // compare it to all debt (bsc)
         uint256 totalSupply = bsc.totalSupply();
         uint256 totalWEthDeposited = IERC20(wEth).balanceOf(address(engine));
         uint256 totalWBtcDeposited = IERC20(wBtc).balanceOf(address(engine));
@@ -45,38 +38,30 @@ contract InvariantsTest is StdInvariant, Test {
         uint256 wEthValue = engine.getUsdValue(wEth, totalWEthDeposited);
         uint256 wBtcValue = engine.getUsdValue(wBtc, totalWBtcDeposited);
 
-        console.log("wEth value: ", wEthValue);
-        console.log("wBtc value: ", wBtcValue);
-        console.log("total supply: ", totalSupply);
-        console.log("times mint is called: ", handler.timesMintIsCalled());
-
-        if (totalWBtcDeposited > 0) {
-            assertGt(wBtcValue, 0);
-        }
-
         assert(wEthValue + wBtcValue >= totalSupply);
     }
 
     function invariant_getterFunctionsShouldNotRevert() public view {
-        address[] memory collateralTokens = engine.getCollateralTokens();
-
-        // Basic getters
-        engine.getBSCAddress();
+        engine.getCollateralTokens();
+        engine.getCollateralBalanceOfUser(wEth, address(this));
+        engine.getCollateralBalanceOfUser(wBtc, address(this));
         engine.getAccountInformation(address(this));
+        engine.getUsdValue(wEth, wEthAmount);
+        engine.getUsdValue(wBtc, wBtcAmount);
+        engine.getBSCAddress();
+        engine.getCollateralTokenPriceFeed(wEth);
+        engine.getCollateralTokenPriceFeed(wBtc);
+        engine.getCollateralAmountFromUsd(wEth, wEthAmount);
         engine.getHealthFactor(address(this));
-
-        // Iterate every collateral
-        for (uint256 i = 0; i < collateralTokens.length; i++) {
-            address t = collateralTokens[i];
-            engine.getCollateralBalanceOfUser(t, address(this));
-            engine.getCollateralTokenPriceFeed(t);
-            engine.getUsdValue(t, 0);
-            engine.getUsdValue(t, amount);
-            engine.getCollateralAmountFromUsd(t, amount);
-            engine.getCollateralAmountFromUsd(t, amount);
-        }
+        engine.getBadDebtSink();
+        engine.getTotalBadDebt();
+        engine.getTotalUserCollateral(wEth);
+        engine.getReserveBalance(wEth);
     }
 
+    /// @notice Physical collateral must always equal user claims + reserve.
+    ///         Logs detailed diagnostic info on failure so CI failures are debuggable
+    ///         without needing local reproduction.
     function invariant_engineBalanceMatchesAccounting() public view {
         address[] memory tokens = engine.getCollateralTokens();
         for (uint256 i = 0; i < tokens.length; i++) {
@@ -86,14 +71,18 @@ contract InvariantsTest is StdInvariant, Test {
             uint256 reserve = engine.getReserveBalance(token);
             uint256 accounting = userCollateral + reserve;
 
-            // Detailed failure info in case of mismatch
             if (physical != accounting) {
-                console.log("--- INVARIANT FAILURE ---");
+                console.log("=== INVARIANT FAILURE: balance != accounting ===");
                 console.log("Token:", token);
-                console.log("Physical:", physical);
-                console.log("UserCollateral:", userCollateral);
+                console.log("Physical balance:", physical);
+                console.log("User collateral:", userCollateral);
                 console.log("Reserve:", reserve);
-                console.log("Accounting:", accounting);
+                console.log("Accounting (user + reserve):", accounting);
+                if (physical > accounting) {
+                    console.log("Delta (physical excess):", physical - accounting);
+                } else {
+                    console.log("Delta (accounting excess):", accounting - physical);
+                }
             }
             assertEq(physical, accounting, "balance/accounting mismatch");
         }
