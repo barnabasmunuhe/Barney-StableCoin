@@ -249,4 +249,25 @@ contract ForkIntegrationTest is Test {
             assertEq(physical, accounting, "fork invariant broken");
         }
     }
+
+    /*//////////////////////////////////////////////////////////////
+                       INVARIANT UNDER FORK
+        //////////////////////////////////////////////////////////////*/
+    function test_fork_combinedFunctionsWork() public {
+        deal(SEPOLIA_WETH, alice, 1e18);
+        vm.startPrank(alice);
+        IERC20(SEPOLIA_WETH).approve(address(engine), 1e18);
+        engine.depositCollateralAndMintBSC(SEPOLIA_WETH, 1e18, 500e18);
+        vm.stopPrank();
+
+        assertEq(bsc.balanceOf(alice), 500e18);
+
+        vm.startPrank(alice);
+        bsc.approve(address(engine), 250e18);
+        engine.redeemBSCForCollateral(SEPOLIA_WETH, 0.5e18, 250e18);
+        vm.stopPrank();
+
+        (uint256 remaining,) = engine.getAccountInformation(alice);
+        assertEq(remaining, 250e18);
+    }
 }
