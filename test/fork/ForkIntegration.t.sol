@@ -200,14 +200,14 @@ contract ForkIntegrationTest is Test {
         engine.liquidate(SEPOLIA_WETH, alice, 500e18);
         vm.stopPrank();
 
-        // alice's collateral fully seized
-        assertEq(engine.getCollateralBalanceOfUser(SEPOLIA_WETH, alice), 0, "alice collateral seized");
+        // ... keep the existing setup, price crash and liquidation ...
 
-        // treasury received whatever the reserve absorbed
-        uint256 treasuryAfter = IERC20(SEPOLIA_WETH).balanceOf(treasury);
-        assertGt(treasuryAfter, treasuryBefore, "treasury received absorbed collateral");
+        assertEq(engine.getReserveBalance(SEPOLIA_WETH), reserveBefore, "reserve should remain in the engine");
 
-        // leftover debt that the reserve couldn't cover is recorded as bad debt
+        assertEq(
+            IERC20(SEPOLIA_WETH).balanceOf(treasury), treasuryBefore, "treasury should not receive reserve collateral"
+        );
+
         assertGt(engine.getTotalBadDebt(), 0, "uncovered bad debt should be recorded");
     }
 

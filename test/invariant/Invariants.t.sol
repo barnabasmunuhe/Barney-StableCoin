@@ -10,6 +10,13 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {HelperConfig} from "../../script/HelperConfig.s.sol";
 import {Handler} from "./Handler.t.sol";
 
+// PROPERTIES THAT MUST ALWAYS BE TRUE
+// 1. Physical collateral matches user claims + reserves.
+// 2. Getter functions remain callable.
+// 3. BSC total supply equals outstanding debt.
+// 4. Aggregate bad debt matches individual recognized bad-debt records.
+// 5. Recognized bad debt never exceeds outstanding debt.
+
 contract InvariantsTest is StdInvariant, Test {
     DeployBSC deployer;
     CoinEngine engine;
@@ -30,15 +37,11 @@ contract InvariantsTest is StdInvariant, Test {
         targetContract(address(handler));
     }
 
-    function invariant_protocolMustHaveMoreValueThanTotalSupply() public view {
+    function invariant_totalSupplyEqualsOutstandingDebt() public view {
         uint256 totalSupply = bsc.totalSupply();
-        uint256 totalWEthDeposited = IERC20(wEth).balanceOf(address(engine));
-        uint256 totalWBtcDeposited = IERC20(wBtc).balanceOf(address(engine));
+        uint256 totalDebt = handler.getTotalDebt();
 
-        uint256 wEthValue = engine.getUsdValue(wEth, totalWEthDeposited);
-        uint256 wBtcValue = engine.getUsdValue(wBtc, totalWBtcDeposited);
-
-        assert(wEthValue + wBtcValue >= totalSupply);
+        assertEq(totalSupply, totalDebt, "BSC supply must equal outstanding debt");
     }
 
     function invariant_getterFunctionsShouldNotRevert() public view {
@@ -85,6 +88,27 @@ contract InvariantsTest is StdInvariant, Test {
                 }
             }
             assertEq(physical, accounting, "balance/accounting mismatch");
+        }
+    }
+
+    function invariant_totalBadDebtMatchesActorRecords() public view {
+        address[] memory actors = handler.getActors();
+        uint256 totalRecognizedBadDebt;
+
+        for (uint256 i = 0; i < actors.length; i++) {
+            totalRecognizedBadDebt += engine.getRecognizedBadDebt(actors[i]);
+        }
+
+        assertEq(engine.getTotalBadDebt(), totalRecognizedBadDebt, "Aggregate bad debt mismatch");
+    }
+
+    function invariant_recognizedBadDebtNeverExceedsDebt() public view {
+        address[] memory actors = handler.getActors();
+
+        for (uint256 i = 0; i < actors.length; i++) {
+            (uint256 debt,) = engine.getAccountInformation(actors[i]);
+
+            assertLe(engine.getRecognizedBadDebt(actors[i]), debt, "Recognized bad debt exceeds outstanding debt");
         }
     }
 }

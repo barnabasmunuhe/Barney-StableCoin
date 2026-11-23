@@ -79,6 +79,82 @@ contract Handler is Test {
         try engine.redeemCollateral(address(collateral), amountCollateral) {} catch {}
     }
 
+    function burnBSC(uint256 amount, uint256 actorSeed) public {
+        address actor = actors[actorSeed % actors.length];
+
+        (uint256 debt,) = engine.getAccountInformation(actor);
+        uint256 balance = bsc.balanceOf(actor);
+
+        uint256 maxBurn = debt < balance ? debt : balance;
+        if (maxBurn == 0) return;
+
+        amount = bound(amount, 1, maxBurn);
+
+        vm.startPrank(actor);
+        bsc.approve(address(engine), amount);
+
+        try engine.burnBSC(amount) {} catch {}
+
+        vm.stopPrank();
+    }
+
+    function crashPrice(uint256 randomCollateral, uint256 newPrice) public {
+        ERC20Mock collateral = _getCollateralFromRandomCollateral(randomCollateral);
+
+        MockV3Aggregator priceFeed = address(collateral) == address(wEth) ? ethUsdPriceFeed : btcUsdPriceFeed;
+
+        (, int256 currentPrice,,,) = priceFeed.latestRoundData();
+
+        if (currentPrice <= 1) return;
+
+        newPrice = bound(newPrice, 1, uint256(currentPrice));
+
+        priceFeed.updateAnswer(int256(newPrice));
+    }
+
+    function liquidate(uint256 randomCollateral, uint256 actorSeed, uint256 liquidatorSeed, uint256 debtToCover)
+        public
+    {
+        uint256 userIndex = actorSeed % actors.length;
+        uint256 liquidatorIndex = liquidatorSeed % (actors.length - 1);
+
+        if (liquidatorIndex >= userIndex) {
+            liquidatorIndex++;
+        }
+
+        address user = actors[userIndex];
+        address liquidator = actors[liquidatorIndex];
+
+        ERC20Mock collateral = _getCollateralFromRandomCollateral(randomCollateral);
+
+        (uint256 debt,) = engine.getAccountInformation(user);
+        uint256 collateralBalance = engine.getCollateralBalanceOfUser(address(collateral), user);
+
+        uint256 liquidatorBalance = bsc.balanceOf(liquidator);
+
+        if (debt == 0 || collateralBalance == 0 || liquidatorBalance == 0 || engine.getHealthFactor(user) >= 1e18) {
+            return;
+        }
+
+        uint256 maxCover = debt < liquidatorBalance ? debt : liquidatorBalance;
+
+        debtToCover = bound(debtToCover, 1, maxCover);
+
+        vm.startPrank(liquidator);
+        bsc.approve(address(engine), debtToCover);
+
+        try engine.liquidate(address(collateral), user, debtToCover) {} catch {}
+
+        vm.stopPrank();
+    }
+
+    function getTotalDebt() external view returns (uint256 totalDebt) {
+        for (uint256 i = 0; i < actors.length; i++) {
+            (uint256 minted,) = engine.getAccountInformation(actors[i]);
+            totalDebt += minted;
+        }
+    }
+
     function _getCollateralFromRandomCollateral(uint256 randomCollateral) private view returns (ERC20Mock) {
         if (randomCollateral % 2 == 0) {
             return wEth;

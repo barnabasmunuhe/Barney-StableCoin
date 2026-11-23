@@ -316,7 +316,7 @@ contract CoinEngineTest is Test {
     }
 
     /*//////////////////////////////////////////////////////////////
-                       BATCH 4 — MINT / BURN EDGE CASES
+                       MINT / BURN EDGE CASES
     //////////////////////////////////////////////////////////////*/
     function testRevertsIfMintAmountIsZero() public {
         vm.prank(USER);
@@ -404,6 +404,35 @@ contract CoinEngineTest is Test {
         engine.burnBSC(30e18);
         vm.stopPrank();
         assertEq(bsc.totalSupply(), supplyBefore - 30e18);
+    }
+
+    function test_underwaterBorrowerCanPartiallyRepay() public {
+        address badUser = _createBadDebt(0.02e18, 10e18, 500e8);
+
+        uint256 debtBefore = engine.getRecognizedBadDebt(badUser);
+        uint256 repayment = 0.25e18;
+
+        vm.startPrank(badUser);
+        bsc.approve(address(engine), repayment);
+        engine.burnBSC(repayment);
+        vm.stopPrank();
+
+        assertEq(engine.getRecognizedBadDebt(badUser), debtBefore - repayment);
+        assertEq(engine.getTotalBadDebt(), debtBefore - repayment);
+    }
+
+    function test_fullRepaymentClearsRecognizedBadDebt() public {
+        address badUser = _createBadDebt(0.02e18, 10e18, 500e8);
+
+        uint256 remainingDebt = engine.getRecognizedBadDebt(badUser);
+
+        vm.startPrank(badUser);
+        bsc.approve(address(engine), remainingDebt);
+        engine.burnBSC(remainingDebt);
+        vm.stopPrank();
+
+        assertEq(engine.getRecognizedBadDebt(badUser), 0);
+        assertEq(engine.getTotalBadDebt(), 0);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -754,40 +783,34 @@ contract CoinEngineTest is Test {
         vm.stopPrank();
     }
 
-    function test_reserveAbsorbsBadDebtFully() public mintedBSC {
+    function test_reserveRemainsAfterBadDebtRecognition() public mintedBSC {
         vm.prank(USER);
         engine.redeemCollateral(wEth, 5e18);
+
         uint256 reserveBefore = engine.getReserveBalance(wEth);
         uint256 treasuryBefore = ERC20Mock(wEth).balanceOf(engine.getBadDebtSink());
-        assertGt(reserveBefore, 0);
 
-        _createBadDebt(0.02e18, 10e18, 500e8);
+        address badUser = _createBadDebt(0.02e18, 10e18, 500e8);
 
-        assertLt(engine.getReserveBalance(wEth), reserveBefore);
-        assertEq(engine.getTotalBadDebt(), 0);
-        assertGt(ERC20Mock(wEth).balanceOf(engine.getBadDebtSink()), treasuryBefore);
+        uint256 recognizedDebt = engine.getRecognizedBadDebt(badUser);
+
+        assertGt(recognizedDebt, 0);
+        assertEq(engine.getTotalBadDebt(), recognizedDebt);
+        assertEq(engine.getReserveBalance(wEth), reserveBefore);
+        assertEq(ERC20Mock(wEth).balanceOf(engine.getBadDebtSink()), treasuryBefore);
     }
 
-    function test_reserveDepletedThenUncoveredBadDebtRecorded() public mintedBSC {
+    function test_reserveRemainsWhenBadDebtExceedsReserve() public mintedBSC {
         vm.prank(USER);
         engine.redeemCollateral(wEth, 0.05e18);
 
-        _createBadDebt(1e18, 1000e18, 500e8);
+        uint256 reserveBefore = engine.getReserveBalance(wEth);
 
-        assertEq(engine.getReserveBalance(wEth), 0);
-        assertGt(engine.getTotalBadDebt(), 0);
-    }
+        address badUser = _createBadDebt(1e18, 1000e18, 500e8);
 
-    function test_reserveTransferredToTreasuryOnAbsorption() public mintedBSC {
-        vm.prank(USER);
-        engine.redeemCollateral(wEth, 5e18);
-
-        address sink = engine.getBadDebtSink();
-        uint256 sinkBefore = ERC20Mock(wEth).balanceOf(sink);
-
-        _createBadDebt(0.02e18, 10e18, 500e8);
-
-        assertGt(ERC20Mock(wEth).balanceOf(sink), sinkBefore);
+        assertGt(engine.getRecognizedBadDebt(badUser), 0);
+        assertEq(engine.getTotalBadDebt(), engine.getRecognizedBadDebt(badUser));
+        assertEq(engine.getReserveBalance(wEth), reserveBefore);
     }
 
     function test_reserveAccruesOnEveryRedeem() public mintedBSC {
@@ -807,16 +830,6 @@ contract CoinEngineTest is Test {
         vm.expectEmit(true, false, false, true, address(engine));
         emit CoinEngine.ReserveAccrued(wEth, expectedFee);
         engine.redeemCollateral(wEth, 1e18);
-    }
-
-    function test_reserveDustAfterFullAbsorption() public mintedBSC {
-        vm.prank(USER);
-        engine.redeemCollateral(wEth, 5e18);
-
-        _createBadDebt(0.02e18, 10e18, 500e8);
-
-        assertLt(engine.getReserveBalance(wEth), 5e15);
-        assertEq(engine.getTotalBadDebt(), 0);
     }
 
     function test_reserveStaysZeroForTokenWithNoActivity() public mintedBSC {

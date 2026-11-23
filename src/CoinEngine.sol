@@ -197,7 +197,6 @@ contract CoinEngine is ReentrancyGuard {
 
     function burnBSC(uint256 amountToBurn) public nonReentrant moreThanZero(amountToBurn) {
         _burnBSC(msg.sender, msg.sender, amountToBurn);
-        _revertIfHealthFactorIsBroken(msg.sender);
     }
 
     /**
@@ -253,16 +252,12 @@ contract CoinEngine is ReentrancyGuard {
         // Bad debt: deduplicated per user, absorbed by reserve first.
         uint256 remainingDebt = s_bscMinted[user];
         if (remainingDebt > 0 && getTotalAccountCollateralValueInUsd(user) == 0) {
-            uint256 newBadDebt =
-                remainingDebt > s_recognizedBadDebt[user] ? remainingDebt - s_recognizedBadDebt[user] : 0;
+            uint256 newBadDebt = remainingDebt - s_recognizedBadDebt[user];
 
             if (newBadDebt > 0) {
                 s_recognizedBadDebt[user] = remainingDebt;
-                uint256 uncoveredUsd = _absorbBadDebtFromReserve(collateral, newBadDebt);
-                if (uncoveredUsd > 0) {
-                    s_totalBadDebt += uncoveredUsd;
-                    emit BadDebtRecognized(user, uncoveredUsd);
-                }
+                s_totalBadDebt += newBadDebt;
+                emit BadDebtRecognized(user, newBadDebt);
             }
         }
 
@@ -312,6 +307,16 @@ contract CoinEngine is ReentrancyGuard {
     /// @dev CAVEAT: does not check health factor. Caller must verify.
     function _burnBSC(address onBehalfOf, address bscFrom, uint256 amountBscToBurn) private {
         s_bscMinted[onBehalfOf] -= amountBscToBurn;
+
+        // Repay recognized bad debt first.
+        uint256 recognizedDebt = s_recognizedBadDebt[onBehalfOf];
+        uint256 badDebtReduction = amountBscToBurn < recognizedDebt ? amountBscToBurn : recognizedDebt;
+
+        if (badDebtReduction > 0) {
+            s_recognizedBadDebt[onBehalfOf] -= badDebtReduction;
+            s_totalBadDebt -= badDebtReduction;
+        }
+
         IERC20(address(i_bsc)).safeTransferFrom(bscFrom, address(this), amountBscToBurn);
         i_bsc.burn(amountBscToBurn);
     }
