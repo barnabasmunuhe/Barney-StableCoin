@@ -12,7 +12,9 @@ out/
 /broadcast/**/dry-run/
 
 # Docs
-docs/
+docs/*
+!docs/whitepaper/
+!docs/whitepaper/*.pdf
 
 # Dotenv file
 .env
