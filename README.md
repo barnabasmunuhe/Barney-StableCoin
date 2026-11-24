@@ -18,7 +18,7 @@ The protocol consists of BarneyStableCoin, CoinEngine and OracleLib, with a futu
 
 **CoinEngine:** [View on Sepolia Etherscan](https://sepolia.etherscan.io/address/0x515f8eED4344B28458D69899217A51F9c495701d)
 
-📄 **Technical Whitepaper:** [Barney StableCoin — Technical Whitepaper v1.0 (PDF)](docs/whitepaper/Barney_StableCoin_Technical_Whitepaper_Polished.pdf)
+📄 **Technical Whitepaper:** [Barney StableCoin Technical Whitepaper v1.0](docs/whitepaper/Barney_StableCoin_Technical_Whitepaper_v1.0.pdf)
 
 ---
 
