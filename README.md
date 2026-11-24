@@ -10,7 +10,7 @@
 
 Barney StableCoin (BSC) is a decentralized stablecoin protocol built with Solidity and Foundry. It enables users to mint a USD-pegged ERC-20 token against supported crypto collateral while enforcing collateralization requirements and debt accounting on-chain.
 
-The protocol consists of BarneyStableCoin, CoinEngine and OracleLib, with a future governance and protocol safety vision through Barney Guardian.
+The protocol consists of BarneyStableCoin, CoinEngine and OracleLib, with a future governance and protocol safety vision through **Barney Guardian**.
 
 **Network:** Ethereum Sepolia Testnet
 
