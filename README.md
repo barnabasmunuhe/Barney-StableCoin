@@ -1,484 +1,624 @@
-# Barney StableCoin (BSC)
+# Barney StableCoin — Overcollateralized Stablecoin Protocol
 
-An overcollateralized, USD-pegged stablecoin engine built on Solidity and Foundry.
+[![Solidity](https://img.shields.io/badge/Solidity-0.8.33-blue)](https://soliditylang.org/)
+[![Framework](https://img.shields.io/badge/Framework-Foundry-orange)](https://book.getfoundry.sh/)
+[![Oracle](https://img.shields.io/badge/Oracle-Chainlink-blue)](https://chain.link/)
+[![Network](https://img.shields.io/badge/Network-Sepolia-purple)](https://sepolia.etherscan.io/)
+[![Tests](https://img.shields.io/badge/Tests-112%20Passing-success)](#running-tests)
 
-BSC is a decentralized stablecoin backed by exogenous collateral (WETH and WBTC). Users
-deposit collateral and mint BSC against it, subject to a 200% collateralization ratio and
-a continuous health-factor check. Undercollateralized positions can be liquidated by
-anyone, and a fee-funded reserve acts as a first-loss buffer against bad debt before
-losses are recorded on-chain.
+> **Testnet engineering project:** An overcollateralized, USD-pegged stablecoin protocol featuring multi-asset collateral, Chainlink price feeds, automated liquidation, reserve management and explicit bad-debt accounting.
 
-The design follows the MakerDAO DAI pattern, with three deliberate additions that are not
-present in most reference implementations:
+Barney StableCoin (BSC) is a decentralized stablecoin protocol built with Solidity and Foundry. It enables users to mint a USD-pegged ERC-20 token against supported crypto collateral while enforcing collateralization requirements and debt accounting on-chain.
 
-1. A mathematically justified health-factor floor for liquidations (HF = 0.55)
-2. A fee-funded reserve that absorbs bad debt as a first-loss layer
-3. A full invariant test suite that verifies the accounting cannot silently break
+The protocol consists of BarneyStableCoin, CoinEngine and OracleLib, with a future governance and protocol safety vision through Barney Guardian.
+
+**Network:** Ethereum Sepolia Testnet
+
+**Stablecoin:** BarneyStableCoin (BSC)
+
+**CoinEngine:** [View on Sepolia Etherscan](https://sepolia.etherscan.io/address/0x515f8eED4344B28458D69899217A51F9c495701d)
+
+📄 **Technical Whitepaper:** [Barney StableCoin — Technical Whitepaper v1.0 (PDF)](docs/whitepaper/Barney_StableCoin_Technical_Whitepaper_Polished.pdf)
 
 ---
 
 ## Table of Contents
 
-- [What This Is](#what-this-is)
+- [Overview](#overview)
+- [Why It Matters](#why-it-matters)
+- [At a Glance](#at-a-glance)
+- [Non-Production Scope](#non-production-scope)
 - [Architecture](#architecture)
-- [Key Design Decisions](#key-design-decisions)
-- [Health Factor and the 0.55 Threshold](#health-factor-and-the-055-threshold)
-- [Bad Debt and the First-Loss Reserve](#bad-debt-and-the-first-loss-reserve)
-- [Testing](#testing)
-- [Security Invariants](#security-invariants)
-- [Project Structure](#project-structure)
+- [Core Components](#core-components)
+- [Functional Scope](#functional-scope)
+- [Protocol Lifecycle](#protocol-lifecycle)
+- [Core Financial Flows](#core-financial-flows)
+- [Liquidation and Risk Management](#liquidation-and-risk-management)
+- [Reserve and Bad-Debt Accounting](#reserve-and-bad-debt-accounting)
+- [Oracle Integration and Price Safety](#oracle-integration-and-price-safety)
+- [Security Model](#security-model)
+- [Protocol Invariants](#protocol-invariants)
+- [Getting Started](#getting-started)
+- [Running Tests](#running-tests)
 - [Deployment](#deployment)
-- [Running Fork Tests](#running-fork-tests)
-- [Known Limitations](#known-limitations)
-- [Roadmap](#roadmap)
-- [Origin and Acknowledgements](#origin-and-acknowledgements)
+- [Sepolia Deployment](#sepolia-deployment)
+- [Barney Guardian](#barney-guardian)
+- [Limitations and Roadmap](#limitations-and-roadmap)
+- [Production Hardening Checklist](#production-hardening-checklist)
+- [Repository Structure](#repository-structure)
+- [References](#references)
+- [License](#license)
 
 ---
 
-## What This Is
+## Overview
 
-Two primary contracts:
+Barney StableCoin implements an overcollateralized stablecoin system centered around an ERC-20 token and a dedicated collateral management engine.
 
-**`BarneyStableCoin.sol`** — an ERC20 stablecoin (`BSC`), `Ownable`, `ERC20Burnable`.
-Mint and burn are restricted to the owner. Ownership is transferred to `CoinEngine`
-during deployment, so the engine — and only the engine — controls supply.
+The protocol focuses on:
 
-**`CoinEngine.sol`** — the protocol core. Holds collateral, tracks per-user debt,
-calculates health factors against live Chainlink price feeds, and enforces
-overcollateralization on every mint, redeem, and liquidation. It also manages a
-per-token fee-funded reserve that absorbs bad debt.
+- Multi-asset crypto collateral.
+- USD-denominated collateral valuation.
+- Chainlink price-feed integration.
+- Collateralized BSC issuance and repayment.
+- Health-factor enforcement.
+- Automated liquidation mechanisms.
+- Protocol reserve accounting.
+- Explicit bad-debt recognition.
+- Stateful fuzz and invariant testing.
 
-Users interact through four entry points:
+### Why It Matters
 
-| Function | Purpose |
+Stablecoin protocols must maintain consistency between collateral, outstanding debt, token supply and liquidation mechanisms.
+
+This project explores three important engineering concerns:
+
+1. **Collateral solvency:** How does the protocol ensure issued stablecoins are adequately collateralized?
+2. **Risk enforcement:** How are unhealthy positions identified and liquidated?
+3. **Accounting integrity:** How are reserves and unrecovered debt tracked without silently losing accounting consistency?
+
+The objective is to demonstrate collateralized stablecoin architecture, oracle integration, liquidation engineering and rigorous smart-contract testing.
+
+## At a Glance
+
+| Parameter | Configuration |
 |---|---|
-| `depositCollateral(token, amount)` | Deposit WETH or WBTC as collateral |
-| `mintBSC(amount)` | Mint BSC against deposited collateral |
-| `burnBSC(amount)` | Burn BSC to reduce debt |
-| `redeemCollateral(token, amount)` | Withdraw collateral (0.10% fee accrues to reserve) |
-| `liquidate(collateral, user, debtToCover)` | Liquidate an undercollateralized position |
+| Stablecoin | BarneyStableCoin (BSC) |
+| Token standard | ERC-20 |
+| Accounting currency | USD |
+| Collateral | WETH and BTC-like mock |
+| Oracle | Chainlink Price Feeds |
+| Liquidation threshold | 55% |
+| Liquidation bonus | 10% |
+| Network | Ethereum Sepolia |
+| Chain ID | 11155111 |
+| Solidity | 0.8.33 |
+| Framework | Foundry |
+| Recorded tests | 112 passed |
+| Invariant campaign | 256 runs, 32,768 handler calls |
 
-Convenience wrappers `depositCollateralAndMintBSC` and `redeemBSCForCollateral` are
-provided for single-transaction flows.
+These are the documented project configuration and recorded test results. The deployed contracts and their stored configuration are authoritative for the Sepolia instance.
 
----
+## Non-Production Scope
+
+Barney StableCoin is an experimental testnet engineering project, not an independently audited financial protocol.
+
+Current scope:
+
+- Ethereum Sepolia deployment.
+- WETH and eight-decimal BTC-like mock collateral.
+- Chainlink USD price-feed configuration.
+- Collateralized issuance and repayment.
+- Liquidation and redemption mechanisms.
+- Reserve and bad-debt accounting.
+- No integrated Barney Guardian governance.
+- No production mainnet deployment.
+
+The BTC-like token is a test ERC-20 mock. It is not canonical WBTC and is not backed by Bitcoin.
 
 ## Architecture
-┌─────────────────────┐
-│ Chainlink Feeds │
-│ ETH/USD BTC/USD │
-└──────────┬──────────┘
-│
-┌─────────────┐ │ ┌─────────────┐
-│ WETH │────┐ │ ┌────│ WBTC │
-└─────────────┘ │ │ │ └─────────────┘
-▼ ▼ ▼
-┌─────────────────────┐
-│ CoinEngine │
-│ │
-│ • collateral │
-│ • debt ledger │
-│ • health factor │
-│ • reserve │
-│ • bad-debt ledger │
-└──────────┬──────────┘
-│ mint / burn
-▼
-┌─────────────────────┐
-│ BarneyStableCoin │
-│ BSC │
-└─────────────────────┘
-│
-▼ (on bad debt absorption)
-┌─────────────────────┐
-│ Treasury │
-│ (configurable) │
-└─────────────────────┘
 
-text
+The protocol separates token issuance, collateral management and oracle operations.
 
-### Three layers of solvency protection
+```mermaid
+flowchart TD
+    U[User] --> W[Wallet]
+    W --> E[CoinEngine]
 
-| Layer | Mechanism | Status |
-|---|---|---|
-| **1** | 200% overcollateralization + 10% liquidation bonus | Implemented |
-| **2** | 0.10% redeem fee → per-token reserve absorbs bad debt | Implemented |
-| **3** | External backstop (`BarneyGuardian`) for catastrophic bad debt | Roadmap |
+    C1[WETH] --> E
+    C2[BTC Mock] --> E
 
-Layer 1 is the primary defense. Layer 2 is a first-loss buffer that absorbs small
-losses without touching the system's collateralization ratio. Layer 3 is the subject
-of a companion repository and is not part of this codebase.
+    O1[ETH/USD Feed] --> L[OracleLib]
+    O2[BTC/USD Feed] --> L
+    L --> E
 
----
+    E -->|Mint / Burn| B[BarneyStableCoin]
+    E --> R[Reserve and Bad-Debt Accounting]
 
-## Key Design Decisions
+    G[Barney Guardian]
+    G -.->|Proposed future integration| E
+```
 
-Every choice below is deliberate and reflected in the code and tests.
+### Architecture Boundaries
 
-### 200% collateralization, 10% liquidation bonus
+- **BarneyStableCoin:** ERC-20 token issued and burned under CoinEngine authority.
+- **CoinEngine:** Enforces collateral, debt, health-factor, liquidation and accounting rules.
+- **OracleLib:** Provides Chainlink price-feed reading and validation functionality.
+- **Chainlink:** Supplies external collateral price observations.
+- **Barney Guardian:** Proposed future governance and protocol safety layer; not currently integrated.
 
-Standard parameters from the MakerDAO/DAI lineage. High enough to absorb typical
-market volatility before positions become liquidatable, low enough that capital is
-not wasted. The 10% bonus is the industry-standard incentive; see the derivation
-below for why it is the linchpin of the health-factor floor.
+The smart contracts are authoritative for collateral balances, debt and protocol state.
 
-### Fee on redeem only (0.10%), not on deposit or mint
+## Core Components
 
-Fees on extraction, not on entry. Deposits and mints are the actions the protocol
-wants to encourage; redeems are where the reserve is funded. Denominator is
-`BPS_DENOMINATOR = 10_000`, so `REDEEM_FEE_BPS = 10` is exactly 0.10%.
+### BarneyStableCoin.sol
 
-### Per-token reserves, no cross-token absorption
+The protocol's ERC-20 stablecoin.
 
-`s_reserve[token]` tracks each collateral token separately. A WETH reserve cannot
-cover a WBTC bad debt. This is intentional: cross-token absorption would introduce
-an oracle dependency at exactly the moment the system is under stress. Keeping
-reserves local keeps the accounting simple and the failure modes bounded.
+Responsibilities:
 
-### Bad-debt sink is a treasury address, not `address(0xdead)`
+- ERC-20 token implementation.
+- Controlled minting and burning.
+- Ownership-based issuance authority.
+- Integration with CoinEngine.
 
-When the reserve absorbs bad debt, the corresponding collateral is transferred to
-the address passed as `i_badDebtSink` in the constructor. For a portfolio
-deployment this is a fresh address; for production it would be a protocol
-multisig. Absorbing collateral by burning to `0xdead` is also valid, but a
-treasury preserves the option to recover value later (Compound's model).
+### CoinEngine.sol
 
-### Reserve absorption moves physical collateral out of the engine
+The core collateral and debt management contract.
 
-Decrementing `s_reserve[token]` without a matching physical transfer would break
-the accounting invariant. The absorption path decrements the reserve **and**
-transfers the same amount of collateral to `i_badDebtSink`, keeping
-`physical == user_claims + reserve` intact. This is verified by
-`invariant_engineBalanceMatchesAccounting`.
+Responsibilities:
 
-### Bad debt is deduplicated per user via `s_recognizedBadDebt`
+- Collateral deposits and redemption.
+- BSC minting and repayment.
+- USD collateral valuation.
+- Health-factor calculations.
+- Liquidation execution.
+- Reserve accounting.
+- Bad-debt recognition.
 
-Without deduplication, a user who is liquidated to zero, re-deposits, and is
-liquidated again would have their residual debt recorded twice in
-`s_totalBadDebt`. `s_recognizedBadDebt[user]` tracks how much has already been
-recognized; new bad debt is `max(0, remainingDebt - recognized)`. This is a
-small but important correctness fix beyond the base implementation.
+### OracleLib.sol
 
-### Constructor validates zero addresses, empty arrays, and duplicates
+The Chainlink oracle integration library.
 
-The engine constructor rejects:
-- Array length mismatches
-- Empty collateral array
-- Zero address for any of: collateral token, price feed, BSC token, bad-debt sink
-- Duplicate collateral tokens (O(n²) — fine, n is tiny)
+Responsibilities:
 
-Feeds are **not** validated at construction. A broken feed is caught on first use
-via the `OracleLib` staleness, positivity, and round-completeness checks. This
-avoids expensive constructor calls and matches how Uniswap V3 pools defer oracle
-setup to first observation.
+- Reading Chainlink price feeds.
+- Oracle response validation.
+- Price decimal normalization.
+- Collateral valuation support.
 
-### Decimal-safe oracle math
+### HelperConfig.s.sol
 
-`getUsdValue` and `getCollateralAmountFromUsd` read `IERC20Metadata(token).decimals()`
-and normalize accordingly, so 18-decimal WETH and 8-decimal WBTC both produce correct
-18-decimal USD values. Most reference implementations assume 18 decimals and silently
-misprice 8-decimal tokens by 10^10.
+Provides network-specific deployment configuration, including collateral token addresses and their corresponding price feeds.
 
----
+### DeployBSC.s.sol
 
-## Health Factor and the 0.55 Threshold
+Deploys the protocol contracts and establishes CoinEngine as the stablecoin's issuance authority.
 
-The health factor is defined as:
-HF = (collateralValueInUsd × LIQUIDATION_THRESHOLD / LIQUIDATION_PRECISION) / debt
-= (collateralValueInUsd × 0.5) / debt
+## Functional Scope
 
-text
+| Capability | Description |
+|---|---|
+| Collateral deposits | Accepts supported ERC-20 collateral |
+| Stablecoin issuance | Mints BSC against eligible collateral |
+| Debt repayment | Burns BSC and reduces outstanding debt |
+| Collateral redemption | Withdraws eligible collateral |
+| USD valuation | Uses Chainlink price feeds |
+| Health factor | Evaluates collateralization risk |
+| Liquidation | Recovers collateral against eligible debt |
+| Reserve accounting | Tracks protocol-owned collateral |
+| Bad-debt recognition | Records unrecovered debt |
+| Accounting views | Exposes collateral, debt and reserve data |
 
-A position is liquidatable when `HF < 1.0`. **However**, liquidation with a 10%
-bonus does not always improve the position's HF. The math:
+## Protocol Lifecycle
 
-When a liquidator covers `x` of debt, they receive `1.1x` of collateral. The
-position's HF changes by:
-new_HF > old_HF ⟺ collateral / debt > 1.1 ⟺ 2 × HF > 1.1 ⟺ HF > 0.55
+The protocol follows a collateralized issuance lifecycle.
 
-text
+1. **Deposit:** Users deposit supported collateral into CoinEngine.
+2. **Valuation:** Collateral is valued using configured Chainlink USD feeds.
+3. **Mint:** Eligible users mint BSC against their collateral positions.
+4. **Repayment:** Users repay outstanding debt by burning BSC.
+5. **Redemption:** Eligible collateral can be withdrawn subject to risk constraints.
+6. **Liquidation:** Unhealthy positions can be liquidated to recover outstanding debt.
+7. **Accounting:** Reserves and recognized bad debt are maintained separately.
 
-**Below HF = 0.55, every liquidation worsens the position's HF.** A check that
-demands `endingHF > startingHF` after liquidation — the standard safety check in
-reference implementations — therefore makes positions below 0.55 **permanently
-unliquidatable**. Funds are frozen, and the position slowly becomes bad debt.
+## Core Financial Flows
 
-The engine resolves this by only enforcing HF improvement when
-`startingHF >= 0.55`. Below that threshold, the liquidation is allowed to proceed
-even though it mathematically worsens HF. Resolution at a loss is better than
-permanent freeze.
+### Collateral Deposit and Valuation
 
-This threshold is not a magic constant — it is `(1 + liquidationBonus) / 2`. If
-the bonus is ever changed to, say, 20%, the threshold becomes 0.60.
+Users deposit supported ERC-20 assets into CoinEngine.
 
----
+The engine records collateral balances and obtains USD-denominated values through OracleLib.
 
-## Bad Debt and the First-Loss Reserve
+The protocol accounts for different token decimal configurations:
 
-**Bad debt** is debt with zero collateral backing. It cannot be liquidated further
-because there is nothing to seize.
+- WETH: 18 decimals.
+- BTC mock: 8 decimals.
 
-The engine handles bad debt in two stages:
+### Stablecoin Minting
 
-**Stage 1 — reserve absorption.** When a liquidation leaves residual debt, the
-engine attempts to cover it from `s_reserve[collateral]`. The absorbed amount is
-transferred to `i_badDebtSink`, decrementing both the reserve and the engine's
-physical balance so that the accounting invariant stays intact. Partial absorption
-is possible: if the reserve is smaller than the bad debt, it is drained to zero
-and the remainder moves to Stage 2.
+Users request BSC issuance against deposited collateral.
 
-**Stage 2 — `s_totalBadDebt`.** Any portion the reserve could not cover is
-recorded in `s_totalBadDebt`. This value is visible on-chain via
-`getTotalBadDebt()` and is the input to Layer 3 (`BarneyGuardian`).
+CoinEngine:
 
-**What the reserve is not.** The reserve is a first-loss buffer, not a guarantee.
-It refills from future redemption fees, but it does not retroactively pay down
-already-recognized bad debt — that is a governance/backstop decision, not an
-automatic engine action. See [Known Limitations](#known-limitations).
+1. Retrieves the user's collateral balances.
+2. Calculates total collateral value.
+3. Evaluates outstanding debt.
+4. Calculates the resulting health factor.
+5. Enforces applicable collateralization constraints.
+6. Mints BSC when the position satisfies protocol requirements.
 
----
+### Repayment and Burning
 
-## Testing
+Users repay outstanding BSC debt through CoinEngine.
 
-**110+ tests** across four categories, all green locally and in CI.
+The repayment mechanism burns BSC and updates outstanding debt and recognized bad-debt accounting.
 
-| Suite | File | Count | Purpose |
-|---|---|---|---|
-| Unit | `test/unit/CoinEngine.t.sol` | 76 | Every engine function, every error path, every event |
-| Unit | `test/unit/BarneyStableCoin.t.sol` | 14 | Token behavior, access control, ERC20 compliance |
-| Unit | `test/unit/OracleLib.t.sol` | 7 | Staleness, zero/negative prices, future timestamps |
-| Fuzz | `test/fuzz/BarneyFuzz.t.sol` | 8 | Stateless invariants on the token: supply conservation, transfer behavior |
-| Invariant | `test/invariant/Invariants.t.sol` | 4 | Stateful invariants over 32,768 randomized calls |
-| Fork | `test/fork/ForkIntegration.t.sol` | 5 | Full system against real Sepolia feeds and real WETH |
+Repayment is supported even when an account is underwater.
 
-Run the full suite:
+### Collateral Redemption
+
+Users can redeem eligible collateral when the resulting position satisfies the protocol's applicable risk constraints.
+
+The engine maintains accounting consistency across user collateral and protocol reserves.
+
+## Liquidation and Risk Management
+
+The protocol uses a health-factor mechanism to evaluate collateralized positions.
+
+Conceptually:
+
+```text
+Health Factor = Adjusted Collateral Value / Outstanding Debt
+```
+
+Positions crossing the configured liquidation boundary become eligible for liquidation.
+
+| Parameter | Value |
+|---|---:|
+| Liquidation threshold | 55% |
+| Liquidation bonus | 10% |
+
+Liquidation allows eligible participants to repay outstanding debt in exchange for collateral and an incentive.
+
+The mechanism is designed to reduce protocol exposure to undercollateralized positions.
+
+## Reserve and Bad-Debt Accounting
+
+The protocol distinguishes between:
+
+- User collateral.
+- Protocol-owned reserve collateral.
+- Outstanding debt.
+- Recognized bad debt.
+
+When collateral is exhausted and debt remains unrecovered, the engine records the residual amount as recognized bad debt.
+
+Reserve balances and bad-debt records are tracked separately.
+
+The configured treasury/bad-debt sink is not a governance mechanism and is not Barney Guardian.
+
+## Oracle Integration and Price Safety
+
+The protocol uses Chainlink AggregatorV3 price feeds for collateral valuation.
+
+### Sepolia Price Feeds
+
+| Feed | Address |
+|---|---|
+| ETH/USD | `0x694AA1769357215DE4FAC081bf1f309aDC325306` |
+| BTC/USD | `0x1b44F3514812d835EB1BDB0acB33d3fA3351Ee43` |
+
+Oracle data is a critical dependency because collateral valuation directly influences issuance and liquidation decisions.
+
+Oracle validation must account for invalid responses, stale observations, decimal differences and feed configuration.
+
+Reference: [Chainlink Data Feeds Documentation](https://docs.chain.link/data-feeds)
+
+## Security Model
+
+The protocol incorporates several security-conscious design mechanisms.
+
+| Risk | Current Control |
+|---|---|
+| Unauthorized token issuance | CoinEngine-controlled ownership |
+| Reentrancy | Reentrancy protection on relevant entry points |
+| Invalid collateral | Configured collateral support |
+| Incorrect valuation | Chainlink price-feed integration |
+| Decimal mismatch | Token decimal-aware valuation |
+| Undercollateralized debt | Health-factor enforcement |
+| Unrecoverable debt | Explicit bad-debt accounting |
+| Accounting inconsistency | Stateful invariant testing |
+
+### Security Assumptions
+
+The protocol remains dependent on:
+
+- Correct collateral and oracle configuration.
+- Chainlink feed availability and correctness.
+- Market liquidity for liquidation.
+- Correct execution of collateral and debt transitions.
+- Secure deployment and administrative key management.
+
+No independent third-party security audit or formal verification certification is claimed.
+
+## Protocol Invariants
+
+The invariant suite evaluates important accounting properties:
+
+- Physical collateral held by CoinEngine reconciles with user collateral and protocol reserves.
+- Public getters remain callable.
+- BSC total supply reconciles with outstanding debt across tracked handler actors.
+- Aggregate recognized bad debt reconciles with tracked user-level bad debt.
+- Recognized bad debt does not exceed tracked outstanding debt.
+
+### Recorded Invariant Campaign
+
+- 256 runs.
+- 32,768 handler calls.
+- Zero handler reverts.
+
+These properties are bounded by the invariant handler, tracked actors and generated actions. They are not a universal proof of correctness.
+
+## Getting Started
+
+### Prerequisites
+
+- [Git](https://git-scm.com/)
+- [Foundry](https://book.getfoundry.sh/getting-started/installation)
+- [Solidity](https://soliditylang.org/)
+- An Ethereum RPC endpoint for fork testing and deployment.
+
+### Installation
 
 ```bash
-forge test
-Run only the fast unit tests:
+git clone https://github.com/barnabasmunuhe/Barney-StableCoin.git
 
-bash
-forge test --match-path "test/unit/*"
-Run the invariant tests with detailed traces:
+cd Barney-StableCoin
 
-bash
-forge test --match-contract InvariantsTest -vvv
-Fork tests
-The fork suite exercises the full system against live Chainlink feeds on Sepolia,
-using real WETH. WBTC on Sepolia is not deployed as a contract at the expected
-address, so the suite uses an 8-decimal mock for the token — but keeps the real
-BTC/USD Chainlink feed, so decimal normalization is tested against live data.
+forge install
+```
 
-The five fork tests:
+### Build
 
-Full lifecycle — deposit → mint → burn → redeem against real feeds and WETH
+```bash
+forge build
+```
 
-WBTC decimal handling — 8-decimal math with live BTC/USD feed
+### Run Tests
 
-Liquidation + reserve + treasury — full Layer-2 path with a mocked price crash
+```bash
+forge test -vvv
+```
 
-Oracle staleness — time-warped feed triggers OracleLib__PriceFeed_Is_Stale
+### Format
 
-Accounting invariant — the same invariant from fuzzing, verified on real state
+```bash
+forge fmt
+```
 
-Security Invariants
-Four stateful invariants are enforced across 32,768 randomized calls per run
-(256 runs × 128 depth):
+## Running Tests
 
-invariant_protocolMustHaveMoreValueThanTotalSupply
-Total collateral value in USD ≥ total BSC supply. If this ever fails, the protocol
-is insolvent.
+The project uses Foundry for automated smart-contract testing.
 
-invariant_engineBalanceMatchesAccounting
-For every collateral token:
-IERC20(token).balanceOf(engine) == s_totalCollateralDeposited[token] + s_reserve[token]
-No wei of collateral is unaccounted for. This is the invariant that proves the
-fee and absorption paths do not leak value.
+### Testing Strategy
 
-invariant_getterFunctionsShouldNotRevert
-All public view functions are callable. Guards against accidentally introducing
-a getter that reverts on valid inputs.
+| Test Layer | Purpose |
+|---|---|
+| Unit testing | Validates contract functions, access control and accounting |
+| Fuzz testing | Explores generated inputs and edge cases |
+| Invariant testing | Evaluates accounting properties across generated action sequences |
+| Fork testing | Exercises integration behavior against Sepolia state |
 
-invariant_reserveNeverDecreases
-The reserve is monotone non-decreasing except when explicitly consumed by
-absorption (which is separately verified by the accounting invariant).
+### Recorded Test Results
 
-Notable fixes caught during development
-Decimal normalization — 8-decimal WBTC was mispriced by 10^10 in a naive implementation. Fixed with IERC20Metadata.decimals() normalization and a dedicated regression test.
+| Test Category | Result |
+|---|---:|
+| BarneyStableCoin unit tests | 14 |
+| CoinEngine unit tests | 76 |
+| OracleLib tests | 7 |
+| Fuzz tests | 8 |
+| Sepolia fork tests | 6 |
+| Invariant properties | 5 |
+| **Total** | **112 passed** |
 
-Bad-debt double-counting — a user who was liquidated to zero, re-deposited, and was liquidated again had their residual debt recorded twice. Fixed with s_recognizedBadDebt[user].
+Recorded execution:
 
-HF-improvement check locking positions below 0.55 — fixed by conditionally applying the check only above the mathematical crossover.
+- 112 passed.
+- 0 failed.
+- 0 skipped.
+- 256 invariant runs.
+- 32,768 handler calls.
 
-msg.sender == address(engine) self-transfer edge case in the fuzz handler — surfaced by an invariant failure on CI, fixed by using makeAddr actors in the handler.
+Fork tests require a valid Sepolia RPC endpoint.
 
-Project Structure
-text
-src/
-├── BarneyStableCoin.sol           # ERC20 stablecoin
-├── CoinEngine.sol                 # Core protocol
-└── libraries/
-    └── OracleLib.sol              # Chainlink staleness + positivity checks
+## Deployment
 
-script/
-├── DeployBSC.s.sol                # Deploy BSC + engine, transfer ownership
-└── HelperConfig.s.sol             # Sepolia and Anvil configurations
+The documented deployment is on Ethereum Sepolia.
 
-test/
-├── unit/
-│   ├── CoinEngine.t.sol           # 76 tests
-│   ├── BarneyStableCoin.t.sol     # 14 tests
-│   └── OracleLib.t.sol            # 7 tests
-├── fuzz/
-│   └── BarneyFuzz.t.sol           # 8 fuzz tests
-├── invariant/
-│   ├── Handler.t.sol              # Fuzz handler using makeAddr actors
-│   └── Invariants.t.sol           # 4 invariants
-├── fork/
-│   └── ForkIntegration.t.sol      # 5 fork tests
-└── mocks/
-    └── ERC20MockEightDec.sol      # 8-decimal ERC20 mock
-Deployment
-Local (Anvil)
-bash
-anvil                              # in one terminal
-forge script script/DeployBSC.s.sol --broadcast
-Anvil configuration deploys mock ETH/USD and BTC/USD feeds, a mock 18-decimal
-WETH, and a mock 8-decimal WBTC. No external dependencies required.
+### Environment Variables
 
-Sepolia
-bash
-forge script script/DeployBSC.s.sol \
-  --rpc-url $SEPOLIA_RPC_URL \
-  --private-key $PRIVATE_KEY \
-  --broadcast \
-  --verify
-HelperConfig reads block.chainid and selects the Sepolia configuration, which
-uses the real Chainlink ETH/USD and BTC/USD feeds and the real Sepolia WETH
-address. The treasury address is passed as the fourth constructor argument to
-CoinEngine.
+Configure your `.env` file:
 
-Environment variables required:
+```bash
+SEPOLIA_RPC_URL=
+```
 
-bash
-# .env
-SEPOLIA_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
-PRIVATE_KEY=0x...
-Do not commit .env. Add it to .gitignore. See .env.example for the
-expected shape.
+Use the configured Foundry deployment account and sender.
 
-Running Fork Tests
-Fork tests require a Sepolia RPC URL. The setUp function reads
-SEPOLIA_RPC_URL from the environment; if it is missing, fork tests will fail
-with vm.envString: environment variable "SEPOLIA_RPC_URL" not found.
+### Deployment Command
 
-Before running fork tests, either:
-
-Option A — Export for the current shell session:
-
-bash
-export SEPOLIA_RPC_URL="https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY"
-forge test --match-path "test/fork/*" -vvv
-Option B — Use a .env file and source it:
-
-bash
-echo "SEPOLIA_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY" > .env
+```bash
 source .env
-forge test --match-path "test/fork/*" -vvv
-Any Sepolia RPC provider works: Alchemy, Infura, QuickNode, or the public
-https://rpc.sepolia.org (rate-limited but sufficient for this test suite).
 
-CI note. The GitHub Actions workflow passes SEPOLIA_RPC_URL via a
-repository secret of the same name. Fork PRs from external forks will not have
-access to the secret and will see the fork tests fail — this is a GitHub platform
-restriction, not a project issue. To run fork tests locally without a key, either
-skip the fork suite (--no-match-path "test/fork/*") or use
-https://rpc.sepolia.org.
+forge script script/DeployBSC.s.sol \
+  --rpc-url "$SEPOLIA_RPC_URL" \
+  --account metamask-dev \
+  --sender "$DEPLOYER" \
+  --broadcast
+```
 
-Known Limitations
-These are documented by design, not oversights.
+Never commit private keys, RPC credentials or other secrets to the repository.
 
-Uncovered bad debt above the reserve is tracked but not resolved. Visible
-via getTotalBadDebt(). Resolution is the subject of Layer 3
-(BarneyGuardian). The engine does not attempt to write off or socialize
-losses on its own.
+## Sepolia Deployment
 
-Partial-coverage positions are not bad debt. A position with $1 of
-collateral and $1000 of debt has $999 of effectively-unrecoverable value, but
-it is not flagged as bad debt until the $1 is also liquidated. This is
-intentional — the position remains liquidatable until the collateral is
-exhausted.
+**Network:** Ethereum Sepolia  
+**Chain ID:** 11155111  
+**Deployment Date:** 23 November 2026
 
-No cross-token absorption. A WETH reserve cannot cover a WBTC bad debt.
-Keeping reserves local to their token avoids cross-oracle dependencies during
-stress.
+### Deployed Contracts
 
-Single Chainlink feed per collateral. No TWAP, no aggregation, no fallback
-oracle. A misbehaving feed halts mint/burn/liquidate for that token until the
-feed recovers.
+| Contract | Address |
+|---|---|
+| BarneyStableCoin | `0xE028Ef489795CEE98DA4d66f97879bB3FcA55E64` |
+| CoinEngine | `0x515f8eED4344B28458D69899217A51F9c495701d` |
+| OracleLib | `0x3eD73A71300b5e1796551307cb618E2ff796a244` |
 
-Immutable by design. No governance, no upgradeability, no pause. A bug that
-escapes review is not fixable in place.
+### Collateral Tokens
 
-Only WETH and WBTC. The collateral allowlist is set in the constructor and
-cannot be modified. This is a deliberate scope restriction.
+| Asset | Address |
+|---|---|
+| WETH | `0xdd13E55209Fd76AfE204dBda4007C227904f0a81` |
+| BTC mock | `0x929Aae401dF8e284Cec97d099999C6d1d977A35D` |
 
-s_totalBadDebt does not decrement. If a subsequent action partially
-covers an already-recognized bad debt, the ledger is not adjusted. Full
-coverage is out of scope for this iteration; see MakerDAO's vice variable for
-the reference implementation.
+### Treasury / Bad-Debt Sink
 
-No reentrancy guard on the combined wrappers. depositCollateralAndMintBSC
-and redeemBSCForCollateral do not declare nonReentrant because their
-inner calls each guard individually and run sequentially. This is correct but
-easy to "helpfully" break — do not add the modifier to the wrappers.
+```text
+0x8fEf6247BF77b91E4982757aCdB08610605388f7
+```
 
-Roadmap
-☑ Layer 1 — Overcollateralization, liquidation, health-factor math, HF < 0.55 resolution
-☑ Layer 2 — Fee-funded reserve, bad-debt absorption, treasury sink, accounting invariant
-☑ Testing — 110+ tests across unit, fuzz, invariant, and fork suites
-☑ CI — GitHub Actions with secret-managed Sepolia RPC
-□ Layer 3 — BarneyGuardian: Aave-style Safety Module (separate repository)
-□ Formal verification of core invariants (Certora or Halmos)
-□ Multiple independent Chainlink feeds per collateral
-□ Governance module for adding collateral and tuning parameters
-Origin and Acknowledgements
-Built while studying the Cyfrin DSC pattern, then extended with a materially
-different design in three areas:
+### Deployment Verification
 
-The 0.55 HF threshold — a mathematically derived floor below which
-liquidations cannot improve HF, requiring a conditional skip of the improvement
-check
+Post-deployment read-only calls confirmed:
 
-The fee-funded reserve and its absorption path — first-loss buffer with
-accounting-safe treasury transfer
+- Contract bytecode exists at all three deployed contract addresses.
+- CoinEngine owns BarneyStableCoin.
+- Configured collateral tokens and price feeds.
+- Configured bad-debt sink.
+- BSC name, symbol and initial total supply.
+- WETH and BTC mock decimal configurations.
 
-The invariant test suite — including invariant_engineBalanceMatchesAccounting,
-which proves the engine cannot silently lose collateral
+[View CoinEngine on Sepolia Etherscan](https://sepolia.etherscan.io/address/0x515f8eED4344B28458D69899217A51F9c495701d)
 
-The base architecture (exogenous collateral, overcollateralization, liquidation
-bonus, health factor) is the standard DeFi lending pattern. The additions above
-are the parts that required original reasoning.
+[View BarneyStableCoin on Sepolia Etherscan](https://sepolia.etherscan.io/address/0xE028Ef489795CEE98DA4d66f97879bB3FcA55E64)
 
-Inspired by:
+[View OracleLib on Sepolia Etherscan](https://sepolia.etherscan.io/address/0x3eD73A71300b5e1796551307cb618E2ff796a244)
 
-MakerDAO DSS (DAI) — the closest architectural ancestor
+Deployment verification confirms selected contract and configuration properties. It does not establish that every live transaction lifecycle has been validated.
 
-Compound III — the reserve absorption pattern
+## Barney Guardian
 
-Aave V3 — the future direction of Layer 3
+Barney Guardian is a proposed complementary protocol within the Barney ecosystem.
 
-Chainlink Price Feeds
+Its planned architecture explores:
 
-Foundry
+- Decentralized governance.
+- A staking-based Safety Module inspired by Aave.
+- Protocol risk oversight.
+- Governance-authorized bad-debt settlement.
+- Additional protocol resilience mechanisms.
 
-Author
-Barnabas Munuhe
+**Integration status: Not currently implemented.**
 
-Solidity Developer | Smart Contract Security Enthusiast
+CoinEngine does not currently communicate with Barney Guardian, and Guardian does not authorize or execute BSC bad-debt settlements.
 
-GitHub
+This remains a future development objective.
 
-text
+## Limitations and Roadmap
+
+### Current Limitations
+
+- Sepolia testnet deployment only.
+- BTC-like collateral is a test mock, not canonical WBTC.
+- Complete manual Sepolia lifecycle validation remains outstanding.
+- No independent security audit.
+- No formal verification.
+- Liquidation effectiveness depends on external market liquidity.
+- Barney Guardian is not integrated.
+- No production mainnet deployment.
+
+### Potential Future Improvements
+
+- Complete live Sepolia lifecycle validation.
+- Expand stateful fuzzing and invariant coverage.
+- Validate liquidation and bad-debt scenarios.
+- Run Slither and Aderyn static analysis.
+- Strengthen oracle and accounting regression tests.
+- Design Barney Guardian governance and Safety Module.
+- Implement and test governance-based settlement integration.
+- Complete independent security review.
+
+These are proposed improvements, not currently implemented features.
+
+## Production Hardening Checklist
+
+Before considering production deployment:
+
+- [ ] Complete independent smart-contract security audit.
+- [ ] Review ownership and key-management architecture.
+- [ ] Evaluate multisig and governance controls.
+- [ ] Validate all oracle failure scenarios.
+- [ ] Complete manual Sepolia lifecycle testing.
+- [ ] Expand fuzz and invariant testing.
+- [ ] Run and triage Slither and Aderyn findings.
+- [ ] Verify deployed source code and constructor arguments.
+- [ ] Validate liquidation and bad-debt accounting.
+- [ ] Implement operational monitoring and alerting.
+- [ ] Design and test Barney Guardian integration.
+
+## Repository Structure
+
+```text
+Barney-StableCoin/
+│
+├── src/
+│   ├── BarneyStableCoin.sol
+│   ├── CoinEngine.sol
+│   └── libraries/
+│       └── OracleLib.sol
+│
+├── script/
+│   ├── DeployBSC.s.sol
+│   └── HelperConfig.s.sol
+│
+├── test/
+│   ├── unit/
+│   ├── fuzz/
+│   ├── invariant/
+│   ├── fork/
+│   └── mocks/
+│
+├── lib/
+│
+├── docs/
+│   └── whitepaper/
+│       └── Barney_StableCoin_Technical_Whitepaper_Polished.pdf
+│
+├── foundry.toml
+├── foundry.lock
+├── README.md
+└── .gitignore
+```
+
+The directory tree represents the documented project organization; exact filenames may evolve with the repository.
+
+## References
+
+- [Solidity Documentation](https://docs.soliditylang.org/)
+- [Foundry Documentation](https://book.getfoundry.sh/)
+- [OpenZeppelin Contracts](https://docs.openzeppelin.com/contracts/)
+- [Chainlink Data Feeds](https://docs.chain.link/data-feeds)
+- [Chainlink AggregatorV3Interface](https://docs.chain.link/data-feeds/api-reference)
+- [Ethereum Sepolia](https://sepolia.etherscan.io/)
+- [Aave Protocol](https://aave.com/)
+- [MakerDAO](https://makerdao.com/)
+
+## License
+
+MIT License.
 
 ---
+
+**Barney StableCoin** — An engineering exploration of overcollateralized stablecoin infrastructure, oracle-driven valuation, liquidation mechanisms, reserve accounting and protocol resilience.
+
+Built with Solidity, Foundry, Chainlink and OpenZeppelin.
